@@ -41,9 +41,9 @@ if(WIN32)
     ${CMAKE_SOURCE_DIR}/shaders/flow.hlsl ${CMAKE_SOURCE_DIR}/shaders/render.hlsl)
 
   add_executable(Superior WIN32 src/app/main.cpp src/app/capture.cpp src/app/renderer.cpp)
-  set_target_properties(Superior PROPERTIES OUTPUT_NAME "Superior")
+  set_target_properties(Superior PROPERTIES OUTPUT_NAME "Superior" CXX_STANDARD 20)
   target_include_directories(Superior PRIVATE src ${GEN_DIR})
-  target_compile_definitions(Superior PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+  target_compile_definitions(Superior PRIVATE _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
                                               WINVER=0x0A00 _WIN32_WINNT=0x0A00 UNICODE _UNICODE)
   target_compile_options(Superior PRIVATE /W4 /utf-8 /permissive- /EHsc)
   target_link_libraries(Superior PRIVATE superior_core d3d11 dxgi d3dcompiler windowsapp shell32 user32)

@@ -14,6 +14,8 @@ Real-time game enhancer for Windows 10/11 (DirectX 11). Captures one game window
 | Ctrl+Alt+O | OLED mode: Off / Light / Medium / Strong |
 | Ctrl+Alt+Up / Down | OLED intensity |
 | Ctrl+Alt+Right / Left | Sharpness |
+| Ctrl+Alt+A | Anti-aliasing on/off |
+| Ctrl+Alt+PageUp / PageDown | Vibrance (colour richness) |
 | Ctrl+Alt+L | Arabic / English (tray menu) |
 | Ctrl+Alt+Q | Quit |
 
@@ -21,7 +23,10 @@ Settings are saved in `settings.json` next to the exe; the log is `superior.log`
 
 ## What is implemented
 - Window capture on the GPU, overlay with flip-model waitable swap chain, tray icon, hotkeys, Arabic/English tray menu.
-- Upscaling (Catmull-Rom) + halo-limited sharpening + OLED emulation in one pixel pass.
+- Image pipeline (3 GPU passes, FP16 intermediate, dithered output):
+  1. edge-directed anti-aliasing at source resolution (FXAA-style, optional);
+  2. edge-adaptive Lanczos upscale in approximate linear light: 4x4 taps, kernel stretched along edges using a luma structure tensor, de-ringing clamp;
+  3. contrast-adaptive sharpening (no halos), vibrance with skin-tone protection, OLED emulation, triangular dither.
 - Frame generation x2: block-matching motion search (compute shader), per-pixel confidence (color consistency, flow disagreement, match error, fast-motion guard). Low confidence falls back to a plain cross-fade. Scene cuts and duplicate frames are detected and skipped.
 - Picks the GPU with the most VRAM (the NVIDIA GPU on a hybrid laptop).
 

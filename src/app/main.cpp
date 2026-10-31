@@ -20,8 +20,8 @@ namespace {
 
 constexpr UINT WM_TRAY = WM_APP + 1;
 constexpr UINT_PTR kStartTimer = 1;
-enum Cmd { CMD_START = 101, CMD_FG, CMD_OLED, CMD_LANG, CMD_EXIT };
-enum Hot { HK_START = 1, HK_OLED, HK_FG, HK_OLED_UP, HK_OLED_DOWN, HK_SHARP_UP, HK_SHARP_DOWN, HK_LANG, HK_QUIT };
+enum Cmd { CMD_START = 101, CMD_FG, CMD_AA, CMD_OLED, CMD_LANG, CMD_EXIT };
+enum Hot { HK_START = 1, HK_OLED, HK_FG, HK_OLED_UP, HK_OLED_DOWN, HK_SHARP_UP, HK_SHARP_DOWN, HK_LANG, HK_QUIT, HK_AA, HK_VIB_UP, HK_VIB_DOWN };
 
 struct App {
     HINSTANCE inst = nullptr;
@@ -92,10 +92,11 @@ void Notify(const std::wstring& title, const std::wstring& text) {
 
 void UpdateTip() {
     wchar_t buf[128];
-    swprintf_s(buf, L"Superior | %s %s | OLED %s %d%% | %s %d%% | FG %s", g.running ? L"ON" : L"idle",
+    swprintf_s(buf, L"Superior | %s %s | OLED %s %d%% | %s %d%% | FG %s | AA %s | Vib %d%%", g.running ? L"ON" : L"idle",
                g.running && g.genActive ? L"x2" : L"", OledName(), static_cast<int>(g.st.oledIntensity * 100.0f + 0.5f),
                T(L"Sharp", L"حدة"), static_cast<int>(g.st.sharpness * 100.0f + 0.5f),
-               g.st.frameGen ? L"on" : L"off");
+               g.st.frameGen ? L"on" : L"off", g.st.antiAlias ? L"on" : L"off",
+               static_cast<int>(g.st.vibrance * 100.0f + 0.5f));
     g.nid.uFlags = NIF_TIP;
     wcsncpy_s(g.nid.szTip, buf, _TRUNCATE);
     Shell_NotifyIconW(NIM_MODIFY, &g.nid);
@@ -241,6 +242,7 @@ void ShowMenu() {
     AppendMenuW(m, MF_STRING, CMD_START,
                 g.running ? T(L"Stop", L"إيقاف") : T(L"Start (3s - click the game now)", L"ابدأ (3 ثوانٍ - اضغط على اللعبة)"));
     AppendMenuW(m, MF_STRING | (g.st.frameGen ? MF_CHECKED : 0), CMD_FG, T(L"Frame generation x2", L"توليد الفريمات x2"));
+    AppendMenuW(m, MF_STRING | (g.st.antiAlias ? MF_CHECKED : 0), CMD_AA, T(L"Anti-aliasing", L"تنعيم الحواف"));
     std::wstring o = std::wstring(T(L"OLED mode: ", L"وضع OLED: ")) + OledName();
     AppendMenuW(m, MF_STRING, CMD_OLED, o.c_str());
     AppendMenuW(m, MF_STRING, CMD_LANG, Ar() ? L"English" : L"العربية");
@@ -273,6 +275,7 @@ void Command(int id) {
     switch (id) {
         case CMD_START: ToggleStart(true); break;
         case CMD_FG: g.st.frameGen = !g.st.frameGen; SaveAndRefresh(); break;
+        case CMD_AA: g.st.antiAlias = !g.st.antiAlias; SaveAndRefresh(); break;
         case CMD_OLED: CycleOled(); break;
         case CMD_LANG: g.st.language = Ar() ? "en" : "ar"; SaveAndRefresh(); break;
         case CMD_EXIT: PostMessageW(g.main, WM_CLOSE, 0, 0); break;
@@ -301,6 +304,9 @@ LRESULT CALLBACK MainProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 case HK_OLED_DOWN: g.st.oledIntensity -= 0.1f; SaveAndRefresh(); break;
                 case HK_SHARP_UP: g.st.sharpness += 0.1f; SaveAndRefresh(); break;
                 case HK_SHARP_DOWN: g.st.sharpness -= 0.1f; SaveAndRefresh(); break;
+                case HK_AA: g.st.antiAlias = !g.st.antiAlias; SaveAndRefresh(); break;
+                case HK_VIB_UP: g.st.vibrance += 0.1f; SaveAndRefresh(); break;
+                case HK_VIB_DOWN: g.st.vibrance -= 0.1f; SaveAndRefresh(); break;
                 case HK_LANG: g.st.language = Ar() ? "en" : "ar"; SaveAndRefresh(); break;
                 case HK_QUIT: PostMessageW(h, WM_CLOSE, 0, 0); break;
                 default: break;
@@ -381,7 +387,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     const UINT mod = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
     struct { int id; UINT vk; } keys[] = {{HK_START, 'S'},     {HK_OLED, 'O'},        {HK_FG, 'G'},         {HK_OLED_UP, VK_UP},
                                           {HK_OLED_DOWN, VK_DOWN}, {HK_SHARP_UP, VK_RIGHT}, {HK_SHARP_DOWN, VK_LEFT}, {HK_LANG, 'L'},
-                                          {HK_QUIT, 'Q'}};
+                                          {HK_QUIT, 'Q'}, {HK_AA, 'A'}, {HK_VIB_UP, VK_PRIOR}, {HK_VIB_DOWN, VK_NEXT}};
     for (auto& k : keys) {
         if (!RegisterHotKey(g.main, k.id, mod, k.vk)) SERR("RegisterHotKey %d failed (%lu)", k.id, GetLastError());
     }

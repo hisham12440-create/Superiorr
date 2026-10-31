@@ -22,6 +22,8 @@ jobs:
             @("cs_5_0", "CSFlow",  "shaders\flow.hlsl"),
             @("vs_5_0", "VS",      "shaders\render.hlsl"),
             @("ps_5_0", "PSMid",   "shaders\render.hlsl"),
+            @("ps_5_0", "PSAA",    "shaders\render.hlsl"),
+            @("ps_5_0", "PSUp",    "shaders\render.hlsl"),
             @("ps_5_0", "PSFinal", "shaders\render.hlsl")
           )
           foreach ($j in $jobs) {

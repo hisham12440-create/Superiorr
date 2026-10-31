@@ -9,6 +9,8 @@ struct Settings {
     float oledIntensity = 1.0f;    // 0..1
     float sharpness = 0.5f;        // 0..1
     bool frameGen = true;
+    bool antiAlias = true;
+    float vibrance = 0.25f;        // 0..1
 
     // Forces every field into its valid range.
     void Clamp();

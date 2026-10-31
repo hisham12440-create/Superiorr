@@ -42,7 +42,7 @@ ComPtr<ID3DBlob> Compile(const char* src, const char* name, const char* entry, c
 struct RenderCb {
     float srcW, srcH, outW, outH;
     float offX, offY, scale, frame;
-    float sharp, oledLevel, oledIntensity, pad;
+    float sharp, oledLevel, oledIntensity, vibrance;
 };
 static_assert(sizeof(RenderCb) == 48, "constant buffer layout");
 
@@ -86,10 +86,14 @@ void Renderer::InitDevice() {
 
     auto vsBlob = Compile(kRenderHlsl, "render.hlsl", "VS", "vs_5_0");
     auto psMidBlob = Compile(kRenderHlsl, "render.hlsl", "PSMid", "ps_5_0");
+    auto psAABlob = Compile(kRenderHlsl, "render.hlsl", "PSAA", "ps_5_0");
+    auto psUpBlob = Compile(kRenderHlsl, "render.hlsl", "PSUp", "ps_5_0");
     auto psFinBlob = Compile(kRenderHlsl, "render.hlsl", "PSFinal", "ps_5_0");
     auto csBlob = Compile(kFlowHlsl, "flow.hlsl", "CSFlow", "cs_5_0");
     HR(dev_->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vs_));
     HR(dev_->CreatePixelShader(psMidBlob->GetBufferPointer(), psMidBlob->GetBufferSize(), nullptr, &psMid_));
+    HR(dev_->CreatePixelShader(psAABlob->GetBufferPointer(), psAABlob->GetBufferSize(), nullptr, &psAA_));
+    HR(dev_->CreatePixelShader(psUpBlob->GetBufferPointer(), psUpBlob->GetBufferSize(), nullptr, &psUp_));
     HR(dev_->CreatePixelShader(psFinBlob->GetBufferPointer(), psFinBlob->GetBufferSize(), nullptr, &psFinal_));
     HR(dev_->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &csFlow_));
 
@@ -160,6 +164,7 @@ void Renderer::CreateOutput(HWND hwnd, UINT w, UINT h) {
     HR(dev_->CreateRenderTargetView(bb.Get(), nullptr, &bbRtv_));
     outW_ = w;
     outH_ = h;
+    MakeTex(up_, w, h, true, DXGI_FORMAT_R16G16B16A16_FLOAT);
 }
 
 void Renderer::DestroyOutput() {
@@ -170,17 +175,19 @@ void Renderer::DestroyOutput() {
     prev_ = Tex{};
     cur_ = Tex{};
     mid_ = Tex{};
+    aa_ = Tex{};
+    up_ = Tex{};
     srcW_ = srcH_ = 0;
     frames_ = 0;
 }
 
-void Renderer::MakeTex(Tex& t, UINT w, UINT h, bool renderTarget) {
+void Renderer::MakeTex(Tex& t, UINT w, UINT h, bool renderTarget, DXGI_FORMAT fmt) {
     D3D11_TEXTURE2D_DESC d{};
     d.Width = w;
     d.Height = h;
     d.MipLevels = 1;
     d.ArraySize = 1;
-    d.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    d.Format = fmt;
     d.SampleDesc.Count = 1;
     d.Usage = D3D11_USAGE_DEFAULT;
     d.BindFlags = D3D11_BIND_SHADER_RESOURCE | (renderTarget ? D3D11_BIND_RENDER_TARGET : 0);
@@ -198,6 +205,7 @@ void Renderer::SetSourceSize(UINT w, UINT h) {
     MakeTex(prev_, w, h, false);
     MakeTex(cur_, w, h, false);
     MakeTex(mid_, w, h, true);
+    MakeTex(aa_, w, h, true);
 
     blocksX_ = (w + 15) / 16;
     blocksY_ = (h + 15) / 16;
@@ -296,6 +304,26 @@ void Renderer::RenderMid() {
     ctx_->OMSetRenderTargets(1, &nullRtv, nullptr);
 }
 
+void Renderer::Draw(ID3D11RenderTargetView* rtv, UINT w, UINT h, ID3D11PixelShader* ps, ID3D11ShaderResourceView* srv) {
+    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+    D3D11_VIEWPORT vp{0, 0, static_cast<float>(w), static_cast<float>(h), 0, 1};
+    ctx_->RSSetViewports(1, &vp);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
+    ctx_->PSSetShader(ps, nullptr, 0);
+    ctx_->PSSetShaderResources(0, 1, &srv);
+    ID3D11SamplerState* smp = sampler_.Get();
+    ctx_->PSSetSamplers(0, 1, &smp);
+    ID3D11Buffer* cbs[1] = {cbRender_.Get()};
+    ctx_->PSSetConstantBuffers(0, 1, cbs);
+    ctx_->Draw(3, 0);
+
+    ID3D11ShaderResourceView* nullSrv = nullptr;
+    ctx_->PSSetShaderResources(0, 1, &nullSrv);
+    ID3D11RenderTargetView* nullRtv = nullptr;
+    ctx_->OMSetRenderTargets(1, &nullRtv, nullptr);
+}
+
 void Renderer::PresentFinal(Src s, const Settings& st) {
     const float scale = std::min(static_cast<float>(outW_) / srcW_, static_cast<float>(outH_) / srcH_);
     RenderCb cb{};
@@ -310,25 +338,16 @@ void Renderer::PresentFinal(Src s, const Settings& st) {
     cb.sharp = st.sharpness;
     cb.oledLevel = static_cast<float>(st.oledLevel);
     cb.oledIntensity = st.oledIntensity;
+    cb.vibrance = st.vibrance;
     UpdateCb(cbRender_.Get(), &cb, sizeof cb);
 
-    ID3D11RenderTargetView* rtv = bbRtv_.Get();
-    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
-    D3D11_VIEWPORT vp{0, 0, static_cast<float>(outW_), static_cast<float>(outH_), 0, 1};
-    ctx_->RSSetViewports(1, &vp);
-    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
-    ctx_->PSSetShader(psFinal_.Get(), nullptr, 0);
-    ID3D11ShaderResourceView* srv = (s == Src::Mid) ? mid_.srv.Get() : cur_.srv.Get();
-    ctx_->PSSetShaderResources(0, 1, &srv);
-    ID3D11SamplerState* smp = sampler_.Get();
-    ctx_->PSSetSamplers(0, 1, &smp);
-    ID3D11Buffer* cbs[1] = {cbRender_.Get()};
-    ctx_->PSSetConstantBuffers(0, 1, cbs);
-    ctx_->Draw(3, 0);
-
-    ID3D11ShaderResourceView* nullSrv = nullptr;
-    ctx_->PSSetShaderResources(0, 1, &nullSrv);
+    ID3D11ShaderResourceView* src = (s == Src::Mid) ? mid_.srv.Get() : cur_.srv.Get();
+    if (st.antiAlias) {
+        Draw(aa_.rtv.Get(), srcW_, srcH_, psAA_.Get(), src);
+        src = aa_.srv.Get();
+    }
+    Draw(up_.rtv.Get(), outW_, outH_, psUp_.Get(), src);
+    Draw(bbRtv_.Get(), outW_, outH_, psFinal_.Get(), up_.srv.Get());
 
     const HRESULT hr = sc_->Present(1, 0);
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {

@@ -46,7 +46,8 @@ private:
         ComPtr<ID3D11ShaderResourceView> srv;
         ComPtr<ID3D11RenderTargetView> rtv;
     };
-    void MakeTex(Tex& t, UINT w, UINT h, bool renderTarget);
+    void MakeTex(Tex& t, UINT w, UINT h, bool renderTarget, DXGI_FORMAT fmt = DXGI_FORMAT_B8G8R8A8_UNORM);
+    void Draw(ID3D11RenderTargetView* rtv, UINT w, UINT h, ID3D11PixelShader* ps, ID3D11ShaderResourceView* srv);
     void UpdateCb(ID3D11Buffer* cb, const void* data, size_t bytes);
 
     ComPtr<ID3D11Device> dev_;
@@ -54,7 +55,7 @@ private:
     std::wstring adapterName_;
 
     ComPtr<ID3D11VertexShader> vs_;
-    ComPtr<ID3D11PixelShader> psMid_, psFinal_;
+    ComPtr<ID3D11PixelShader> psMid_, psAA_, psUp_, psFinal_;
     ComPtr<ID3D11ComputeShader> csFlow_;
     ComPtr<ID3D11SamplerState> sampler_;
     ComPtr<ID3D11Buffer> cbRender_, cbFlow_;
@@ -64,7 +65,7 @@ private:
     HANDLE waitable_ = nullptr;
     UINT outW_ = 0, outH_ = 0;
 
-    Tex prev_, cur_, mid_;
+    Tex prev_, cur_, mid_, aa_, up_;
     UINT srcW_ = 0, srcH_ = 0;
     int frames_ = 0;
     uint32_t frameNo_ = 0;

@@ -26,6 +26,8 @@ TEST(Config, JsonRoundTrip) {
     a.oledIntensity = 0.7f;
     a.sharpness = 0.25f;
     a.frameGen = false;
+    a.antiAlias = false;
+    a.vibrance = 0.6f;
     Settings b;
     ASSERT_TRUE(FromJson(ToJson(a), b));
     EXPECT_EQ(b.language, "ar");
@@ -33,6 +35,8 @@ TEST(Config, JsonRoundTrip) {
     EXPECT_FLOAT_EQ(b.oledIntensity, 0.7f);
     EXPECT_FLOAT_EQ(b.sharpness, 0.25f);
     EXPECT_FALSE(b.frameGen);
+    EXPECT_FALSE(b.antiAlias);
+    EXPECT_FLOAT_EQ(b.vibrance, 0.6f);
 }
 
 TEST(Config, BadJsonIsRejectedAndDefaultsKept) {
@@ -43,9 +47,10 @@ TEST(Config, BadJsonIsRejectedAndDefaultsKept) {
 
 TEST(Config, OutOfRangeValuesAreClampedOnLoad) {
     Settings s;
-    ASSERT_TRUE(FromJson(R"({"oled_level":42,"sharpness":9})", s));
+    ASSERT_TRUE(FromJson(R"({"oled_level":42,"sharpness":9,"vibrance":-3})", s));
     EXPECT_EQ(s.oledLevel, 3);
     EXPECT_FLOAT_EQ(s.sharpness, 1.0f);
+    EXPECT_FLOAT_EQ(s.vibrance, 0.0f);
 }
 
 TEST(Pacing, GenerateOnlyWhenDisplayIsAboutTwiceTheGameFps) {

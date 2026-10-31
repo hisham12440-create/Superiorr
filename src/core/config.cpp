@@ -13,6 +13,7 @@ void Settings::Clamp() {
     oledLevel = std::min(3, std::max(0, oledLevel));
     oledIntensity = std::min(1.0f, std::max(0.0f, oledIntensity));
     sharpness = std::min(1.0f, std::max(0.0f, sharpness));
+    vibrance = std::min(1.0f, std::max(0.0f, vibrance));
 }
 
 std::string ToJson(const Settings& s) {
@@ -22,6 +23,8 @@ std::string ToJson(const Settings& s) {
     j["oled_intensity"] = s.oledIntensity;
     j["sharpness"] = s.sharpness;
     j["frame_gen"] = s.frameGen;
+    j["anti_alias"] = s.antiAlias;
+    j["vibrance"] = s.vibrance;
     return j.dump(2);
 }
 
@@ -34,6 +37,8 @@ bool FromJson(const std::string& text, Settings& out) {
         s.oledIntensity = j.value("oled_intensity", s.oledIntensity);
         s.sharpness = j.value("sharpness", s.sharpness);
         s.frameGen = j.value("frame_gen", s.frameGen);
+        s.antiAlias = j.value("anti_alias", s.antiAlias);
+        s.vibrance = j.value("vibrance", s.vibrance);
         s.Clamp();
         out = s;
         return true;

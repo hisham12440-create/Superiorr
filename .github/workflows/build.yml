@@ -1,0 +1,54 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate HLSL shaders with fxc
+        shell: pwsh
+        run: |
+          $fxc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          Write-Host "Using $($fxc.FullName)"
+          $out = Join-Path $env:RUNNER_TEMP "cso"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $jobs = @(
+            @("cs_5_0", "CSFlow",  "shaders\flow.hlsl"),
+            @("vs_5_0", "VS",      "shaders\render.hlsl"),
+            @("ps_5_0", "PSMid",   "shaders\render.hlsl"),
+            @("ps_5_0", "PSFinal", "shaders\render.hlsl")
+          )
+          foreach ($j in $jobs) {
+            & $fxc.FullName /nologo /T $j[0] /E $j[1] /Fo (Join-Path $out ($j[1] + ".cso")) $j[2]
+            if ($LASTEXITCODE -ne 0) { throw "Shader $($j[1]) failed to compile" }
+          }
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build\Release\Superior.exe dist\
+          Copy-Item README.md dist\
+          Compress-Archive -Path dist\* -DestinationPath Superior-portable.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Superior
+          path: |
+            dist/Superior.exe
+            Superior-portable.zip

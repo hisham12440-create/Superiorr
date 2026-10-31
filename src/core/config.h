@@ -1,0 +1,23 @@
+#pragma once
+#include <string>
+
+namespace superior {
+
+struct Settings {
+    std::string language = "en";   // "en" or "ar"
+    int oledLevel = 0;             // 0 = off, 1 = light, 2 = medium, 3 = strong
+    float oledIntensity = 1.0f;    // 0..1
+    float sharpness = 0.5f;        // 0..1
+    bool frameGen = true;
+
+    // Forces every field into its valid range.
+    void Clamp();
+};
+
+std::string ToJson(const Settings& s);
+// Returns false (and leaves `out` untouched) if the text is not valid JSON.
+bool FromJson(const std::string& text, Settings& out);
+bool LoadSettings(const std::string& path, Settings& out);
+bool SaveSettings(const std::string& path, const Settings& s);
+
+}  // namespace superior

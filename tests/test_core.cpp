@@ -1,0 +1,100 @@
+#include <gtest/gtest.h>
+
+#include "core/config.h"
+#include "core/oled_curve.h"
+#include "core/pacing.h"
+
+using namespace superior;
+
+TEST(Config, ClampForcesValidRanges) {
+    Settings s;
+    s.language = "xx";
+    s.oledLevel = 9;
+    s.oledIntensity = 5.0f;
+    s.sharpness = -2.0f;
+    s.Clamp();
+    EXPECT_EQ(s.language, "en");
+    EXPECT_EQ(s.oledLevel, 3);
+    EXPECT_FLOAT_EQ(s.oledIntensity, 1.0f);
+    EXPECT_FLOAT_EQ(s.sharpness, 0.0f);
+}
+
+TEST(Config, JsonRoundTrip) {
+    Settings a;
+    a.language = "ar";
+    a.oledLevel = 2;
+    a.oledIntensity = 0.7f;
+    a.sharpness = 0.25f;
+    a.frameGen = false;
+    Settings b;
+    ASSERT_TRUE(FromJson(ToJson(a), b));
+    EXPECT_EQ(b.language, "ar");
+    EXPECT_EQ(b.oledLevel, 2);
+    EXPECT_FLOAT_EQ(b.oledIntensity, 0.7f);
+    EXPECT_FLOAT_EQ(b.sharpness, 0.25f);
+    EXPECT_FALSE(b.frameGen);
+}
+
+TEST(Config, BadJsonIsRejectedAndDefaultsKept) {
+    Settings s;
+    EXPECT_FALSE(FromJson("{not json", s));
+    EXPECT_EQ(s.oledLevel, 0);
+}
+
+TEST(Config, OutOfRangeValuesAreClampedOnLoad) {
+    Settings s;
+    ASSERT_TRUE(FromJson(R"({"oled_level":42,"sharpness":9})", s));
+    EXPECT_EQ(s.oledLevel, 3);
+    EXPECT_FLOAT_EQ(s.sharpness, 1.0f);
+}
+
+TEST(Pacing, GenerateOnlyWhenDisplayIsAboutTwiceTheGameFps) {
+    EXPECT_TRUE(ShouldGenerate(33.3, 16.67, 30));   // 30 fps on 60 Hz
+    EXPECT_TRUE(ShouldGenerate(16.67, 8.33, 30));   // 60 fps on 120 Hz
+    EXPECT_FALSE(ShouldGenerate(16.67, 16.67, 30)); // 60 fps on 60 Hz: nothing to add
+    EXPECT_FALSE(ShouldGenerate(50.0, 16.67, 30));  // 20 fps on 60 Hz: x3 needed, not supported
+    EXPECT_FALSE(ShouldGenerate(33.3, 16.67, 3));   // not enough samples yet
+}
+
+TEST(Pacing, RecommendedCapIsHalfRefresh) {
+    EXPECT_EQ(RecommendedGameCap(144.0), 72);
+    EXPECT_EQ(RecommendedGameCap(60.0), 30);
+}
+
+TEST(Pacing, SceneCutAndStaticDetection) {
+    EXPECT_TRUE(IsSceneCut(600, 1000));
+    EXPECT_FALSE(IsSceneCut(100, 1000));
+    EXPECT_TRUE(IsSceneCut(0, 0));
+    EXPECT_TRUE(IsStaticFrame(1000, 1000));
+    EXPECT_FALSE(IsStaticFrame(900, 1000));
+}
+
+TEST(Pacing, EmaConvergesToSteadyInterval) {
+    IntervalEma e;
+    for (int i = 0; i < 200; ++i) e.Add(33.3);
+    EXPECT_NEAR(e.Value(), 33.3, 0.01);
+    EXPECT_EQ(e.Count(), 200);
+}
+
+TEST(Oled, CurveIsMonotonicAndNeverClips) {
+    for (int level = 1; level <= 3; ++level) {
+        for (float a : {0.0f, 0.25f, 0.5f, 1.0f}) {
+            float prev = -1.0f;
+            for (int i = 0; i <= 4096; ++i) {
+                const float y = static_cast<float>(i) / 4096.0f;
+                const float o = OledCurve(y, level, a);
+                EXPECT_GE(o, prev - 1e-6f) << "level " << level << " a " << a << " y " << y;
+                EXPECT_GE(o, 0.0f);
+                EXPECT_LE(o, 1.0f + 1e-6f);
+                prev = o;
+            }
+            EXPECT_NEAR(OledCurve(0.0f, level, a), 0.0f, 1e-6f);
+            EXPECT_NEAR(OledCurve(1.0f, level, a), 1.0f, 1e-5f);
+        }
+    }
+}
+
+TEST(Oled, LevelZeroIsIdentityAndDarksGetDarker) {
+    EXPECT_FLOAT_EQ(OledCurve(0.3f, 0, 1.0f), 0.3f);
+    EXPECT_LT(OledCurve(0.05f, 3, 1.0f), 0.05f);
+}

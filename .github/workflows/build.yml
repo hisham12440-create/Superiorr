@@ -68,6 +68,13 @@ jobs:
           if ($code -ne 0) { throw "Reference verifier failed: $code" }
           $result = Get-Content $report -Raw | ConvertFrom-Json
           if (-not $result.target_achieved -or $result.frame_count -ne 1) { throw "Unexpected metric fixture report" }
+          $inverse = Join-Path $dir "inverse.pgm"
+          "P2`n2 2`n255`n255 255 0 0" | Set-Content -Encoding ascii $inverse
+          @{ thresholds=@{target_percent=0}; baseline_percent=99; frames=@(@{truth="frame.pgm";generated="inverse.pgm";source_a="frame.pgm";source_b="frame.pgm";content_class="synthetic-metric-fixture"}) } | ConvertTo-Json -Depth 6 | Set-Content $manifest
+          $code = Invoke-Superior @('--verify', ('"' + $manifest + '"'), ('"' + $report + '"'))
+          if ($code -ne 2) { throw "Baseline regression should exit 2, got $code" }
+          $regression = Get-Content $report -Raw | ConvertFrom-Json
+          if ($regression.accepted -ne $false -or $regression.baseline_met -ne $false) { throw "Regression incorrectly accepted" }
           $missing = Join-Path $dir "missing.pgm"
           $output = Join-Path $dir "neural.pgm"
           $code = Invoke-Superior @('--neural', ('"' + $missing + '"'), ('"' + $output + '"'), 'missing-model.onnx')

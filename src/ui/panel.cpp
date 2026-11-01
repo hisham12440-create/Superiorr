@@ -2,6 +2,13 @@
 #include "localized.h"
 #include "filters/presets.h"
 #include "core/profiles.h"
+#include "benchmark/quality.h"
+#include "core/log.h"
+#include <commdlg.h>
+#include <shellapi.h>
+#include <chrono>
+#include <vector>
+#include <algorithm>
 #include <stdexcept>
 #include "imgui.h"
 #include "backends/imgui_impl_win32.h"
@@ -85,6 +92,7 @@ void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, s
 void Panel::Show() { if (window_) { ShowWindow(window_, SW_SHOW); SetForegroundWindow(window_); } }
 bool Panel::Visible() const { return window_ && IsWindowVisible(window_); }
 void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool safeMode) {
+    PollTools();
     if (!initialized_ || !Visible()) return;
     const ULONGLONG now = GetTickCount64();
     if (now - lastDrawMs_ < 33) return;
@@ -207,10 +215,7 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
         localized::TextWrapped("Neural live path is unavailable; spatial fallback is active.");
         localized::TextWrapped("Offline DirectML inference: Superior.exe --neural input.pgm output.pgm model.onnx");
     }
-    if (localized::CollapsingHeader("Quality verification")) {
-        localized::TextWrapped("Ground-truth pass rate: n/a (run --verify on a reference corpus)");
-        localized::TextWrapped("99% is a dataset target, not a runtime guarantee.");
-    }
+    DrawVerification(running);
     if (localized::Button("Reset image settings")) {
         Settings defaults;
         CopyGameSettings(*settings_, defaults);
@@ -230,7 +235,106 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
     target = nullptr;
     context_->OMSetRenderTargets(1, &target, nullptr);
 }
+void Panel::PollTools() {
+    if (!verification_.valid() || verification_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) return;
+    try {
+        const int code = verification_.get();
+        toolStatus_ = code == 0 ? "Verification finished: target and baseline met" :
+                      code == 2 ? "Verification finished: target or baseline missed" :
+                      code == 3 ? "Verification cancelled; no pass rate reported" : "Verification failed; no new result is guaranteed";
+    } catch (const std::exception& e) {
+        toolStatus_ = "Verification worker failed";
+        SERR("Verification worker: %s", e.what());
+    }
+}
+void Panel::CancelToolDialog() {
+    cancelDialog_ = true;
+    HWND popup = GetLastActivePopup(window_);
+    if (popup && popup != window_) PostMessageW(popup, WM_CLOSE, 0, 0);
+}
+void Panel::ChooseVerification() {
+    if (OfflineBusy()) return;
+    toolDialogOpen_ = true; cancelDialog_ = false;
+    struct DialogScope { bool& open; ~DialogScope() { open = false; } } scope{toolDialogOpen_};
+    std::vector<wchar_t> file(32768);
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof dialog;
+    dialog.hwndOwner = window_;
+    dialog.lpstrFilter = L"JSON manifest (*.json)\0*.json\0\0";
+    dialog.lpstrFile = file.data(); dialog.nMaxFile = static_cast<DWORD>(file.size());
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+    dialog.lpstrTitle = settings_->language == "ar" ? L"اختر ملف مجموعة الاختبار" : L"Choose reference manifest";
+    if (!GetOpenFileNameW(&dialog)) {
+        const DWORD error = CommDlgExtendedError();
+        if (error) { toolStatus_ = "File dialog failed"; SERR("Open manifest dialog: %lu", error); }
+        return;
+    }
+    if (cancelDialog_) return;
+    const std::filesystem::path manifest(file.data());
+    auto proposed = manifest.parent_path() / (manifest.stem().wstring() + L".report.json");
+    const auto proposedName = proposed.wstring();
+    if (proposedName.size() + 1 >= file.size()) { toolStatus_ = "Report path is too long"; return; }
+    std::copy(proposedName.begin(), proposedName.end(), file.begin()); file[proposedName.size()] = 0;
+    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+    dialog.lpstrFilter = L"JSON report (*.json)\0*.json\0\0"; dialog.lpstrDefExt = L"json";
+    dialog.lpstrTitle = settings_->language == "ar" ? L"اختر مكان تقرير التحقق" : L"Save verification report";
+    if (!GetSaveFileNameW(&dialog)) {
+        const DWORD error = CommDlgExtendedError();
+        if (error) { toolStatus_ = "File dialog failed"; SERR("Save report dialog: %lu", error); }
+        return;
+    }
+    if (cancelDialog_) return;
+    const std::filesystem::path report(file.data());
+    auto state = std::make_shared<VerifyState>();
+    try {
+        verification_ = std::async(std::launch::async, [state,manifest,report] {
+            if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL))
+                SERR("Verification priority unavailable (%lu)", GetLastError());
+            benchmark::VerifyControl control;
+            control.cancelled = [state] { return state->cancel.load(); };
+            control.progress = [state](size_t completed, size_t total) {
+                state->total.store(total); state->completed.store(completed);
+            };
+            return benchmark::Verify(manifest,report,control);
+        });
+        verifyState_ = state; lastReport_ = report;
+        toolStatus_ = "Running offline verification (not live GPU validation)";
+    } catch (const std::exception& e) {
+        toolStatus_ = "Could not start verification worker";
+        SERR("Start verification: %s", e.what());
+    }
+}
+void Panel::DrawVerification(bool running) {
+    if (!localized::CollapsingHeader("Quality verification")) return;
+    localized::TextWrapped("99% is a dataset target, not a runtime guarantee.");
+    localized::TextWrapped("Choose a reference manifest to evaluate supplied images. This does not record gameplay or generate test frames.");
+    ImGui::BeginDisabled(running || OfflineBusy());
+    if (localized::Button("Choose manifest and run verification")) ChooseVerification();
+    ImGui::EndDisabled();
+    if (running) localized::TextWrapped("Stop capture before starting offline tools");
+    localized::TextWrapped("%s", toolStatus_.c_str());
+    if (verifyState_ && OfflineBusy()) {
+        const size_t total=verifyState_->total.load(), completed=verifyState_->completed.load();
+        const float progress=total ? static_cast<float>(completed)/static_cast<float>(total) : 0.f;
+        ImGui::ProgressBar(progress,ImVec2(-1,0));
+        localized::Text("Completed %u / %u frames", static_cast<unsigned>(completed), static_cast<unsigned>(total));
+        if (localized::Button("Cancel verification")) verifyState_->cancel.store(true);
+        if (verifyState_->cancel.load()) localized::TextWrapped("Cancellation requested; waiting for a safe checkpoint");
+    }
+    if (!lastReport_.empty()) {
+        localized::TextWrapped("%s", lastReport_.u8string().c_str());
+        ImGui::BeginDisabled(OfflineBusy());
+        if (localized::Button("Copy report path")) ImGui::SetClipboardText(lastReport_.u8string().c_str());
+        ImGui::EndDisabled();
+    }
+}
 void Panel::Close() {
+    if (verifyState_) verifyState_->cancel.store(true);
+    if (verification_.valid()) {
+        verification_.wait();
+        PollTools();
+    }
+
     if (initialized_) { ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); }
     localized::Shutdown();
     if (ImGui::GetCurrentContext()) ImGui::DestroyContext();

@@ -51,6 +51,7 @@ struct App {
     hardware::Monitor monitor;
     bool paused = false;
     bool safeMode = false;
+    bool exitAfterDialog = false;
     UniqueHandle frameEvent;
     NOTIFYICONDATAW nid{};
 
@@ -186,6 +187,11 @@ void StopSession(const wchar_t* why) {
 
 void StartSession(HWND target) {
     if (g.running) return;
+    g.panel.PollTools();
+    if (g.panel.OfflineBusy()) {
+        Notify(L"Superior", T(L"Wait for offline verification or cancel it before starting capture.", L"انتظر انتهاء التحقق أو ألغِه قبل بدء الالتقاط."));
+        return;
+    }
     wchar_t cls[64] = {};
     if (target) GetClassNameW(target, cls, 64);
     const bool bad = !target || !IsWindow(target) || !IsWindowVisible(target) || target == g.main ||
@@ -384,6 +390,11 @@ LRESULT CALLBACK MainProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             }
             return 0;
         case WM_CLOSE:
+            if (g.panel.ToolDialogOpen()) {
+                g.exitAfterDialog = true;
+                g.panel.CancelToolDialog();
+                return 0;
+            }
             KillTimer(h, kStartTimer);
             g.hotkeys.Clear();
             StopSession(L"");
@@ -539,7 +550,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         HANDLE handles[2] = {g.frameEvent.Get(), g.gfx.Waitable()};
         DWORD n = 1;
         if (g.running && !g.queue.empty() && handles[1] && NowMs() >= g.queue.front().dueMs) n = 2;
-        DWORD timeout = g.panel.Visible() ? 16 : g.running ? 100 : INFINITE;
+        DWORD timeout = g.panel.Visible() ? 16 : g.running || g.panel.OfflineBusy() ? 100 : INFINITE;
         if (g.running && !g.queue.empty()) timeout = std::min(timeout, static_cast<DWORD>(std::max(1.0, std::ceil(g.queue.front().dueMs - NowMs()))));
         const DWORD wake = MsgWaitForMultipleObjects(n, handles, FALSE, timeout, QS_ALLINPUT);
         if (wake == WAIT_FAILED) {
@@ -563,6 +574,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
                 if (auto time = g.gfx.PollGpuTime()) g.monitor.RecordGpuTime(*time);
                 g.monitor.Poll(NowMs(), static_cast<hardware::Mode>(g.st.comfortMode), g.displayIntervalMs);
                 g.panel.Draw(g.running, g.paused, g.monitor.Data(), g.safeMode);
+                if (g.exitAfterDialog && !g.panel.ToolDialogOpen()) {
+                    g.exitAfterDialog = false;
+                    PostMessageW(g.main, WM_CLOSE, 0, 0);
+                }
             } catch (const std::exception& e) {
                 SERR("UI error: %s", e.what());
                 g.panel.Close();

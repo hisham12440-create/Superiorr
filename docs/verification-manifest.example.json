@@ -10,7 +10,9 @@
       "truth": "clips/frame-001.pgm",
       "generated": "clips/generated-001.pgm",
       "source_a": "clips/frame-000.pgm",
-      "source_b": "clips/frame-002.pgm"
+      "source_b": "clips/frame-002.pgm",
+      "content_class": "fast-motion"
     }
-  ]
+  ],
+  "baseline_percent": 99.0
 }

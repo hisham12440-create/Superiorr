@@ -469,3 +469,77 @@ TEST_F(StorageTest, VerificationNeverOverwritesManifestOrImages) {
     ASSERT_TRUE(ReadText(image,text));
     EXPECT_EQ(text,"P2\n1 1\n255\n0");
 }
+TEST_F(StorageTest, VerificationProgressAndCancellationAreNotSuccess) {
+    using namespace superior::benchmark;
+    Image image{8,8,std::vector<float>(64,.5f)};
+    WritePgm(directory/"frame.pgm",image);
+    const auto manifest=directory/"manifest.json",report=directory/"report.json";
+    ASSERT_TRUE(WriteTextAtomic(manifest,R"({"frames":[{"truth":"frame.pgm","generated":"frame.pgm","source_a":"frame.pgm","source_b":"frame.pgm"},{"truth":"frame.pgm","generated":"frame.pgm","source_a":"frame.pgm","source_b":"frame.pgm"}]})"));
+    size_t completed=0,total=0;
+    VerifyControl control;
+    control.progress=[&](size_t done,size_t count) { completed=done; total=count; };
+    control.cancelled=[&] { return completed==1; };
+    EXPECT_EQ(Verify(manifest,report,control),3);
+    EXPECT_EQ(completed,1u);
+    EXPECT_EQ(total,2u);
+    std::string text;
+    ASSERT_TRUE(ReadText(report,text));
+    EXPECT_NE(text.find("\"cancelled\": true"),std::string::npos);
+    EXPECT_EQ(text.find("\"pass_percent\""),std::string::npos);
+    ASSERT_TRUE(ReadText(directory/"report.json.txt",text));
+    EXPECT_NE(text.find("did not complete"),std::string::npos);
+}
+TEST_F(StorageTest, BaselineRegressionFailsEvenWhenConfiguredTargetPasses) {
+    using namespace superior::benchmark;
+    WritePgm(directory/"black.pgm",Image{8,8,std::vector<float>(64,0)});
+    WritePgm(directory/"white.pgm",Image{8,8,std::vector<float>(64,1)});
+    const auto manifest=directory/"manifest.json",report=directory/"report.json";
+    ASSERT_TRUE(WriteTextAtomic(manifest,R"({"thresholds":{"target_percent":0},"baseline_percent":99,"frames":[{"truth":"black.pgm","generated":"white.pgm","source_a":"black.pgm","source_b":"black.pgm","content_class":"fast-motion"}]})"));
+    EXPECT_EQ(Verify(manifest,report),2);
+    std::string text;
+    ASSERT_TRUE(ReadText(report,text));
+    EXPECT_NE(text.find("\"target_achieved\": true"),std::string::npos);
+    EXPECT_NE(text.find("\"baseline_met\": false"),std::string::npos);
+    EXPECT_NE(text.find("\"accepted\": false"),std::string::npos);
+    EXPECT_NE(text.find("\"fast-motion\""),std::string::npos);
+}
+TEST_F(StorageTest, ClassificationSummariesReflectRealCounts) {
+    using namespace superior::benchmark;
+    WritePgm(directory/"black.pgm",Image{8,8,std::vector<float>(64,0)});
+    const auto manifest=directory/"manifest.json",report=directory/"report.json";
+    ASSERT_TRUE(WriteTextAtomic(manifest,R"({"frames":[{"truth":"black.pgm","generated":"black.pgm","source_a":"black.pgm","source_b":"black.pgm","content_class":"hud"}]})"));
+    size_t complete=0,total=0;
+    VerifyControl control; control.progress=[&](size_t done,size_t count) { complete=done; total=count; };
+    EXPECT_EQ(Verify(manifest,report,control),0);
+    EXPECT_EQ(complete,1u); EXPECT_EQ(total,1u);
+    std::string text;
+    ASSERT_TRUE(ReadText(report,text));
+    EXPECT_NE(text.find("\"content_classes\""),std::string::npos);
+    EXPECT_NE(text.find("\"hud\""),std::string::npos);
+    EXPECT_NE(text.find("\"mean_ssim\": 1.0"),std::string::npos);
+}
+TEST_F(StorageTest, OversizedPgmIsRejectedBeforeAllocation) {
+    using namespace superior::benchmark;
+    ASSERT_TRUE(WriteTextAtomic(directory/"huge.pgm","P5\n8192 8192\n255\n"));
+    EXPECT_THROW(ReadPgm(directory/"huge.pgm"),std::runtime_error);
+    ASSERT_TRUE(WriteTextAtomic(directory/"small.pgm","P2\n1 1\n255\n0"));
+    EXPECT_ANY_THROW(ReadPgm(directory/"small.pgm",[]{return true;}));
+}
+TEST(Quality, CompareCanBeCancelledDuringMetrics) {
+    using namespace superior::benchmark;
+    Image image{32,32,std::vector<float>(1024,.5f)};
+    unsigned checks=0;
+    EXPECT_ANY_THROW(Compare(image,image,image,image,[&]{ return ++checks>3; }));
+}
+TEST_F(StorageTest, EarlyCancellationCannotOverwriteUnvalidatedInputs) {
+    using namespace superior::benchmark;
+    const auto manifest=directory/"manifest.json",input=directory/"frame.pgm";
+    ASSERT_TRUE(WriteTextAtomic(manifest,R"({"frames":[{"truth":"frame.pgm","generated":"frame.pgm","source_a":"frame.pgm","source_b":"frame.pgm"}]})"));
+    const std::string bytes="P2\n1 1\n255\n0";
+    ASSERT_TRUE(WriteTextAtomic(input,bytes));
+    VerifyControl control; control.cancelled=[] { return true; };
+    EXPECT_EQ(Verify(manifest,input,control),3);
+    std::string preserved;
+    ASSERT_TRUE(ReadText(input,preserved));
+    EXPECT_EQ(preserved,bytes);
+}

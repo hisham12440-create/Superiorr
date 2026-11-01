@@ -9,6 +9,9 @@ No injection, hooks, drivers or admin privileges are used. This is **not an
 anti-cheat compatibility certification**. No real-GPU image-quality, latency,
 startup-time, thermal or power-saving result has been measured here.
 
+See [the development plan](docs/DEVELOPMENT_PLAN.md) for priorities, acceptance
+criteria and the remaining work.
+
 ## Download and run
 
 Open the successful **build** run for your branch under GitHub **Actions** and
@@ -147,7 +150,7 @@ Superior.exe --verify manifest.json report.json
 
 See `docs/verification-manifest.example.json`. Supply P5/P2 **8-bit grayscale PGM**
 files for a real reference middle frame, generated candidate and two sources.
-Relative paths resolve beside the manifest. Limits: 8192x8192/image, 10,000
+Relative paths resolve beside the manifest. Limits: 8192 maximum dimension and 16,777,216 pixels/image, 10,000
 records, 8 MiB manifest. JSON and `report.json.txt` contain actual computations:
 
 - PSNR on normalized luma; exact matches use JSON null + `exact_match: true`
@@ -160,7 +163,8 @@ records, 8 MiB manifest. JSON and `report.json.txt` contain actual computations:
 
 Defaults: SSIM >= .95, edge error <= .05, proxy coverage <= 1%. Target: at least
 99% of supplied records pass. Thresholds/target are configurable. Exit codes:
-0 = dataset target met; 2 = evaluated but target missed; 1 = invalid input/error.
+0 = target and optional baseline met; 2 = target/baseline missed;
+1 = invalid input/error; 3 = cancelled.
 Outputs cannot overwrite the manifest or input images.
 
 The evaluator **does not record gameplay, generate candidate frames or test the
@@ -219,7 +223,7 @@ ui/           blue/black ImGui + Windows Arabic text layer
 app/          capture, renderer, tray/session orchestration
 ```
 
-40 CPU tests cover config, reference OLED curve, timing/pacing, budgets/governor,
+46 CPU tests cover config, reference OLED curve, timing/pacing, budgets/governor,
 hotkey validation, Unicode storage/log rotation, profiles, phase scheduling,
 analytic metric cases, PGM handling and input preservation. CI also starts the
 Windows EXE's verifier on an identical-image fixture and checks the neural
@@ -247,3 +251,34 @@ recorder/runtime quality validator, installer/signing/release automation and
 measured 99% results. No game depth/motion vectors are available; **this is not a
 DLSS equivalent**. The overlay and optional components require real Windows/GPU
 acceptance testing before relying on them in daily play.
+
+
+## Verification panel update
+
+Open **Quality verification → Choose manifest and run verification**, choose the
+reference JSON and an output report path. One below-normal-priority CPU worker
+runs independently of UI rendering. Progress counts completed frame records.
+Cancel is cooperative at file-read/metric checkpoints; closing to tray keeps the
+job running, exiting cancels and joins it. Capture cannot start while a job or
+its file picker is active; tools cannot start during capture. Reports remain
+local. **Copy report path** copies the selected destination, which may contain an
+error/cancellation report rather than results. OS error details may be English.
+
+Each manifest record may supply `content_class` (1–64 UTF-8 bytes, default
+`unclassified`). Schema-2 JSON and text reports summarize actual pass counts,
+SSIM and edge error per supplied class; no automatic classifier is implied.
+Optional `baseline_percent` (0–100) adds a non-regression gate: `accepted` requires
+both target and baseline. `target_achieved` alone does not imply acceptance.
+Compare only like datasets, thresholds and configurations; the current scalar
+baseline gate does not prove corpus identity. Missing/invalid records abort the
+evaluation rather than being skipped. Cancellation exports no final pass rate. Once output/input path preflight has
+completed, the text report is replaced with an incomplete-status notice too.
+Earlier preflight failures/cancellation leave existing report files untouched;
+the UI status/exit code is authoritative, not an older file at the destination.
+
+PGM reads use a row buffer, and Sobel metrics are accumulated without four
+full-size double edge maps. Four maximum-size float images require approximately
+256 MiB of pixel storage (not a measured total-process working set). The UI,
+JSON, optional runtimes and driver allocations are additional. This is still an
+offline evaluator, not a recorder or a live shader quality test. GUI responsiveness,
+file pickers, shutdown/cancellation and real-GPU behavior need manual validation.

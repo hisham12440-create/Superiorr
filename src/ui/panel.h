@@ -4,6 +4,10 @@
 #include <dxgi.h>
 #include <wrl/client.h>
 #include <functional>
+#include <future>
+#include <atomic>
+#include <memory>
+#include <filesystem>
 #include "core/config.h"
 #include "hardware/monitor.h"
 namespace superior {
@@ -13,11 +17,26 @@ public:
     void Open(HINSTANCE instance, ID3D11Device* device, Settings* settings,
               std::function<void()> save, ApplyHotkeys applyHotkeys);
     void SetProfileStatus(const std::string& text) { profileStatus_ = text; }
+    bool OfflineBusy() const { return verification_.valid() || toolDialogOpen_; }
+    bool ToolDialogOpen() const { return toolDialogOpen_; }
+    void CancelToolDialog();
+    void PollTools();
     void Close();
     void Show();
     bool Visible() const;
     void Draw(bool running, bool paused, const hardware::Snapshot& hardware, bool safeMode);
 private:
+    struct VerifyState {
+        std::atomic<bool> cancel{false};
+        std::atomic<size_t> completed{0}, total{0};
+    };
+    void ChooseVerification();
+    void DrawVerification(bool running);
+    bool toolDialogOpen_ = false, cancelDialog_ = false;
+    std::future<int> verification_;
+    std::shared_ptr<VerifyState> verifyState_;
+    std::filesystem::path lastReport_;
+    std::string toolStatus_ = "No verification has been run";
     static LRESULT CALLBACK Proc(HWND, UINT, WPARAM, LPARAM);
     HWND window_ = nullptr;
     Settings* settings_ = nullptr;

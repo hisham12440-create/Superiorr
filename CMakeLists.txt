@@ -52,7 +52,7 @@ if(WIN32)
   target_include_directories(superior_ui PUBLIC src PRIVATE ${imgui_SOURCE_DIR})
   target_compile_options(superior_ui PRIVATE /utf-8)
   target_compile_definitions(superior_ui PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-  target_link_libraries(superior_ui PRIVATE d3d11 dxgi d3dcompiler dwmapi)
+  target_link_libraries(superior_ui PRIVATE d3d11 dxgi d3dcompiler dwmapi comdlg32)
   # Compile application shaders on Windows and embed bytecode, never compile
   # image-processing HLSL on the user's machine.
   file(GLOB FXC_CANDIDATES "C:/Program Files (x86)/Windows Kits/10/bin/*/x64/fxc.exe")

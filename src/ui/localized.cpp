@@ -19,6 +19,23 @@ std::unordered_map<std::string, Image> cache;
 size_t cachedBytes=0;
 std::vector<ComPtr<ID3D11ShaderResourceView>> frameReferences;
 const std::unordered_map<std::string, std::string> translations = {
+    {"No verification has been run","لم يُشغّل التحقق بعد"},
+    {"Choose a reference manifest to evaluate supplied images. This does not record gameplay or generate test frames.","اختر ملف مجموعة مرجعية لتقييم الصور المرفقة. هذه الأداة لا تسجّل اللعب ولا تولّد إطارات الاختبار."},
+    {"Choose manifest and run verification","اختر المجموعة وشغّل التحقق"},
+    {"Stop capture before starting offline tools","أوقف الالتقاط قبل تشغيل الأدوات غير المباشرة"},
+    {"Running offline verification (not live GPU validation)","جارٍ التحقق من الصور المرجعية — ليس اختباراً مباشراً لمحرك GPU"},
+    {"Completed %u / %u frames","اكتمل %u من %u إطاراً"},
+    {"Cancel verification","إلغاء التحقق"},
+    {"Cancellation requested; waiting for a safe checkpoint","طُلب الإلغاء؛ بانتظار نقطة توقف آمنة"},
+    {"Copy report path","نسخ مسار التقرير"},
+    {"Verification finished: target and baseline met","اكتمل التحقق: تحقّق الهدف وخط الأساس"},
+    {"Verification finished: target or baseline missed","اكتمل التحقق: لم يتحقق الهدف أو خط الأساس"},
+    {"Verification cancelled; no pass rate reported","أُلغي التحقق؛ لا توجد نسبة نجاح مكتملة"},
+    {"Verification failed; no new result is guaranteed","فشل التحقق؛ قد لا يُكتب تقرير جديد"},
+    {"Verification worker failed","فشلت مهمة التحقق"},
+    {"Could not start verification worker","تعذّر بدء مهمة التحقق"},
+    {"File dialog failed","تعذّر فتح نافذة اختيار الملف"},
+    {"Report path is too long","مسار التقرير طويل جداً"},
     {"S U P E R I O R   /   CONTROL CENTER","سوبيريور — مركز التحكم"},
     {"SAFE MODE: frame generation is disabled","الوضع الآمن: توليد الإطارات معطّل"},
     {"DirectX 11  |  Capture only  |  Prototype","DirectX 11 | التقاط فقط | نسخة تجريبية"},

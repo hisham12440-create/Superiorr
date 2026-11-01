@@ -13,7 +13,7 @@ FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download
 FetchContent_MakeAvailable(json)
 
 # ---- core: pure C++ logic, testable on CI without a GPU --------------------
-add_library(superior_core STATIC src/core/log.cpp src/core/config.cpp src/core/files.cpp src/core/profiles.cpp src/benchmark/quality.cpp)
+add_library(superior_core STATIC src/core/log.cpp src/core/config.cpp src/core/files.cpp src/core/profiles.cpp src/benchmark/quality.cpp src/present/session_stats.cpp)
 target_include_directories(superior_core PUBLIC src)
 target_link_libraries(superior_core PUBLIC nlohmann_json::nlohmann_json)
 if(WIN32)

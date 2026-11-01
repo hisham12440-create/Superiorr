@@ -366,7 +366,7 @@ void Renderer::Draw(ID3D11RenderTargetView* rtv, UINT w, UINT h, ID3D11PixelShad
     ctx_->OMSetRenderTargets(1, &nullRtv, nullptr);
 }
 
-void Renderer::PresentFinal(Src s, const Settings& st, float phase) {
+PresentResult Renderer::PresentFinal(Src s, const Settings& st, float phase) {
     BeginGpuTiming();
     if (s == Src::Mid) RenderMid(phase);
     const float scale = std::min(static_cast<float>(outW_) / srcW_, static_cast<float>(outH_) / srcH_);
@@ -408,7 +408,8 @@ void Renderer::PresentFinal(Src s, const Settings& st, float phase) {
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
         Fail("Present (GPU device lost)", dev_->GetDeviceRemovedReason());
     }
-    if (FAILED(hr) && hr != DXGI_STATUS_OCCLUDED) Fail("Present", hr);
+    if (FAILED(hr)) Fail("Present", hr);
+    return hr == S_OK ? PresentResult::Submitted : hr == DXGI_STATUS_OCCLUDED ? PresentResult::Occluded : PresentResult::OtherStatus;
 }
 
 }  // namespace superior

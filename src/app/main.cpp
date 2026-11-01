@@ -23,6 +23,7 @@
 #include "interpolate/pacer.h"
 #include "benchmark/quality.h"
 #include "neural/offline.h"
+#include "present/session_stats.h"
 
 using namespace superior;
 
@@ -59,6 +60,7 @@ struct App {
     struct QueuedFrame { Src source; float phase; double dueMs; };
     std::deque<QueuedFrame> queue;
     IntervalEma ema;
+    present::SessionStats session;
     double lastFrameMs = 0.0;
     double displayIntervalMs = 16.667;
     double displayHz = 60.0;
@@ -67,6 +69,7 @@ struct App {
     bool warnedNoFrames = false;
     UINT srcW = 0, srcH = 0;
     bool genActive = false;
+    int activeMultiplier = 1;
 } g;
 
 double NowMs() {
@@ -113,8 +116,9 @@ void Notify(const std::wstring& title, const std::wstring& text) {
 
 void UpdateTip() {
     wchar_t buf[128];
+    const std::wstring multiplier = g.running && g.genActive ? L"planned x" + std::to_wstring(g.activeMultiplier) : L"";
     swprintf_s(buf, L"Superior | %s %s | OLED %s %d%% | %s %d%% | FG %s | AA %s | Vib %d%%", g.running ? L"ON" : L"idle",
-               g.running && g.genActive ? L"x2" : L"", OledName(), static_cast<int>(g.st.oledIntensity * 100.0f + 0.5f),
+               multiplier.c_str(), OledName(), static_cast<int>(g.st.oledIntensity * 100.0f + 0.5f),
                T(L"Sharp", L"حدة"), static_cast<int>(g.st.sharpness * 100.0f + 0.5f),
                g.st.frameGen ? L"on" : L"off", g.st.antiAlias ? L"on" : L"off",
                static_cast<int>(g.st.vibrance * 100.0f + 0.5f));
@@ -164,6 +168,12 @@ LRESULT CALLBACK OverlayProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
+void DiscardPending(present::DropReason reason) {
+    for (const auto& frame : g.queue)
+        if (!g.session.Discard(frame.source == Src::Mid, reason)) SERR("Session queue accounting mismatch");
+    g.queue.clear();
+}
+
 void StopSession(const wchar_t* why) {
     if (!g.running && !g.overlay) return;
     KillTimer(g.main, kStartTimer);
@@ -173,13 +183,15 @@ void StopSession(const wchar_t* why) {
         DestroyWindow(g.overlay);
         g.overlay = nullptr;
     }
-    g.queue.clear();
+    DiscardPending(present::DropReason::Stop);
+    g.session.Stop(NowMs());
     if (g.profileSession) CopyGameSettings(g.st, g.globalImageDefaults);
     g.profileSession = false;
     g.gameExecutable.clear();
     g.panel.SetProfileStatus("No active game profile. Global image defaults restored.");
     g.running = false;
     g.genActive = false;
+    g.activeMultiplier = 1;
     SLOG("Session stopped: %s", ToUtf8(why).c_str());
     UpdateTip();
     if (why && *why) Notify(L"Superior", why);
@@ -246,6 +258,7 @@ void StartSession(HWND target) {
         g.framesRecv = 0;
         g.warnedNoFrames = false;
         g.startMs = NowMs();
+        g.session.Start(g.startMs, g.displayIntervalMs);
         SLOG("Session started: display %ux%u @ %.0f Hz", w, h, g.displayHz);
         UpdateTip();
     } catch (const std::exception& e) {
@@ -262,20 +275,26 @@ void OnFrame(ID3D11Texture2D* tex, UINT w, UINT h) {
     g.lastFrameMs = now;
     ++g.framesRecv;
 
+    DiscardPending((g.srcW && (g.srcW != w || g.srcH != h)) ? present::DropReason::Resize : present::DropReason::NewCapture);
     g.gfx.BeginGpuTiming();
     g.gfx.PushFrame(tex, w, h);
     g.srcW = w;
     g.srcH = h;
 
-    g.queue.clear();
     const int maximum = g.st.comfortMode == 0 ? 2 : g.st.maxMultiplier;
     int multiplier = interpolate::ChooseMultiplier(g.ema.Value(), g.displayIntervalMs, g.ema.Count(), maximum);
     const bool canGen = g.st.frameGen && !g.safeMode && g.monitor.Data().allowGeneration && g.gfx.FramesHeld() >= 2 && multiplier > 1;
     g.genActive = canGen;
     if (canGen) g.gfx.ComputeFlow();
     else multiplier = 1;
-    for (const auto& sample : interpolate::Schedule(multiplier, now, g.displayIntervalMs))
-        g.queue.push_back({sample.phase < 1 ? Src::Mid : Src::Cur, sample.phase, sample.dueMs});
+    const bool planChanged = g.activeMultiplier != multiplier;
+    g.activeMultiplier = multiplier;
+    g.session.Plan(multiplier);
+    if (planChanged) UpdateTip();
+    for (const auto& sample : interpolate::Schedule(multiplier, now, g.displayIntervalMs)) {
+        const bool generated = sample.phase < 1;
+        if (g.session.Schedule(generated)) g.queue.push_back({generated ? Src::Mid : Src::Cur, sample.phase, sample.dueMs});
+    }
     g.gfx.EndGpuTiming();
 }
 
@@ -283,13 +302,15 @@ void Tick(bool ready) {
     const bool paused = IsIconic(g.target) || GetForegroundWindow() != g.target;
     if (paused != g.paused) {
         g.paused = paused;
+        g.session.Pause(paused, NowMs());
         g.gfx.ResetHistory();
         ShowWindow(g.overlay, paused ? SW_HIDE : SW_SHOWNOACTIVATE);
-        g.queue.clear();
+        DiscardPending(present::DropReason::Pause);
         g.ema.Reset();
         g.lastFrameMs = 0;
     }
     g.cap.Poll([&](ID3D11Texture2D* tex, UINT w, UINT h) {
+        g.session.Receive(!g.paused);
         if (!g.paused) OnFrame(tex, w, h);
     });
 
@@ -297,7 +318,17 @@ void Tick(bool ready) {
         (ready || WaitForSingleObject(g.gfx.Waitable(), 0) == WAIT_OBJECT_0)) {
         const auto sample = g.queue.front();
         g.queue.pop_front();
-        g.gfx.PresentFinal(sample.source, g.st, sample.phase);
+        const double begin = NowMs();
+        try {
+            const auto result = g.gfx.PresentFinal(sample.source, g.st, sample.phase);
+            const auto outcome = result == PresentResult::Submitted ? present::Outcome::Submitted :
+                                 result == PresentResult::Occluded ? present::Outcome::Occluded : present::Outcome::OtherStatus;
+            if (!g.session.Complete(sample.source == Src::Mid, outcome, sample.dueMs, begin, NowMs()))
+                SERR("Session submission accounting mismatch");
+        } catch (...) {
+            g.session.Complete(sample.source == Src::Mid, present::Outcome::Failed, sample.dueMs, begin, NowMs());
+            throw;
+        }
     }
 
     if (g.cap.Closed() || !IsWindow(g.target)) {
@@ -573,6 +604,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             try {
                 if (auto time = g.gfx.PollGpuTime()) g.monitor.RecordGpuTime(*time);
                 g.monitor.Poll(NowMs(), static_cast<hardware::Mode>(g.st.comfortMode), g.displayIntervalMs);
+                g.panel.SetSessionSnapshot(g.session.Snapshot(NowMs()));
                 g.panel.Draw(g.running, g.paused, g.monitor.Data(), g.safeMode);
                 if (g.exitAfterDialog && !g.panel.ToolDialogOpen()) {
                     g.exitAfterDialog = false;

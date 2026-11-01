@@ -543,3 +543,141 @@ TEST_F(StorageTest, EarlyCancellationCannotOverwriteUnvalidatedInputs) {
     ASSERT_TRUE(ReadText(input,preserved));
     EXPECT_EQ(preserved,bytes);
 }
+
+#include "present/session_stats.h"
+TEST(Session, NotAvailableUntilStartedAndRestartsAreClean) {
+    using namespace superior::present;
+    SessionStats stats;
+    EXPECT_FALSE(stats.Snapshot(0).available);
+    EXPECT_FALSE(stats.Schedule(false));
+    EXPECT_THROW(SessionJson(stats.Snapshot(0)),std::invalid_argument);
+    stats.Start(100,16);
+    stats.Receive(true); stats.Schedule(true);
+    stats.Stop(200);
+    stats.Start(300,8);
+    const auto s=stats.Snapshot(400);
+    EXPECT_EQ(s.received,0u); EXPECT_EQ(s.generated.scheduled,0u);
+    EXPECT_DOUBLE_EQ(s.elapsedMs,100);
+    EXPECT_TRUE(s.running); EXPECT_TRUE(s.Consistent());
+}
+TEST(Session, AllPresentOutcomesAreDistinctAndConserved) {
+    using namespace superior::present;
+    SessionStats stats; stats.Start(0,16);
+    for(int i=0;i<4;++i) ASSERT_TRUE(stats.Schedule(true));
+    EXPECT_TRUE(stats.Complete(true,Outcome::Submitted,0,0,1));
+    EXPECT_TRUE(stats.Complete(true,Outcome::Occluded,16,16,17));
+    EXPECT_TRUE(stats.Complete(true,Outcome::OtherStatus,32,32,33));
+    EXPECT_TRUE(stats.Complete(true,Outcome::Failed,48,48,49));
+    EXPECT_FALSE(stats.Complete(true,Outcome::Submitted,64,64,65));
+    const auto s=stats.Snapshot(100);
+    EXPECT_EQ(s.generated.scheduled,4u); EXPECT_EQ(s.generated.submitted,1u);
+    EXPECT_EQ(s.generated.occluded,1u); EXPECT_EQ(s.generated.otherStatus,1u);
+    EXPECT_EQ(s.generated.failed,1u); EXPECT_EQ(s.generated.pending,0u);
+    EXPECT_TRUE(s.Consistent());
+}
+TEST(Session, DiscardReasonsAndStopDrainAllPendingWork) {
+    using namespace superior::present;
+    SessionStats stats; stats.Start(0,16);
+    for(int i=0;i<3;++i) stats.Schedule(true);
+    stats.Schedule(false); stats.Schedule(false);
+    EXPECT_TRUE(stats.Discard(true,DropReason::NewCapture));
+    EXPECT_TRUE(stats.Discard(true,DropReason::Pause));
+    EXPECT_TRUE(stats.Discard(false,DropReason::Resize));
+    stats.Stop(100);
+    const auto s=stats.Snapshot(1000);
+    EXPECT_EQ(s.replaced,1u); EXPECT_EQ(s.droppedOnPause,1u); EXPECT_EQ(s.droppedOnResize,1u);
+    EXPECT_EQ(s.droppedOnStop,2u); EXPECT_EQ(s.generated.pending+s.real.pending,0u);
+    EXPECT_TRUE(s.Consistent());
+    EXPECT_FALSE(stats.Discard(false,DropReason::Stop));
+    EXPECT_FALSE(stats.Schedule(true));
+}
+TEST(Session, PausesFreezeActivityAndDoNotBridgeReturnIntervals) {
+    using namespace superior::present;
+    SessionStats stats; stats.Start(10,16);
+    stats.Schedule(false); stats.Complete(false,Outcome::Submitted,20,20,21);
+    stats.Pause(true,110);
+    auto mid=stats.Snapshot(210);
+    EXPECT_DOUBLE_EQ(mid.activeMs,100); EXPECT_DOUBLE_EQ(mid.pausedMs,100);
+    EXPECT_FALSE(stats.Schedule(false));
+    stats.Receive(false);
+    stats.Pause(false,310);
+    stats.Receive(true);
+    stats.Schedule(false); stats.Complete(false,Outcome::Submitted,320,320,321);
+    stats.Stop(1010);
+    const auto s=stats.Snapshot(9999);
+    EXPECT_DOUBLE_EQ(s.elapsedMs,1000); EXPECT_DOUBLE_EQ(s.pausedMs,200); EXPECT_DOUBLE_EQ(s.activeMs,800);
+    EXPECT_EQ(s.returnIntervalMs.samples,0u);
+    EXPECT_EQ(s.received,2u); EXPECT_EQ(s.accepted,1u); EXPECT_EQ(s.ignoredWhilePaused,1u);
+    EXPECT_TRUE(s.Consistent());
+}
+TEST(Session, CpuWallTimeAndLatenessAreNotScanoutMeasurements) {
+    using namespace superior::present;
+    SessionStats stats; stats.Start(0,16);
+    stats.Schedule(false); stats.Complete(false,Outcome::Submitted,10,12,15);
+    stats.Schedule(true); stats.Complete(true,Outcome::Submitted,26,26,31);
+    const auto s=stats.Snapshot(32);
+    EXPECT_DOUBLE_EQ(s.callWallMs.Mean(),4); EXPECT_DOUBLE_EQ(s.callWallMs.maximum,5);
+    EXPECT_DOUBLE_EQ(s.lateStartMs.Mean(),1); EXPECT_DOUBLE_EQ(s.lateStartMs.maximum,2);
+    EXPECT_DOUBLE_EQ(s.returnIntervalMs.Mean(),16);
+    const auto json=SessionJson(s);
+    EXPECT_NE(json.find("\"scanout_fps\": null"),std::string::npos);
+    EXPECT_NE(json.find("\"ground_truth_pass_rate\": null"),std::string::npos);
+}
+TEST(Session, UnknownOutcomeAndClockRegressionsDoNotCorruptCounters) {
+    using namespace superior::present;
+    SessionStats stats; stats.Start(100,16); stats.Schedule(false);
+    EXPECT_FALSE(stats.Complete(false,static_cast<Outcome>(99),100,100,101));
+    EXPECT_EQ(stats.Snapshot(102).real.pending,1u);
+    stats.Pause(true,200); stats.Pause(false,150);
+    EXPECT_TRUE(stats.Snapshot(150).paused);
+    stats.Stop(150); EXPECT_TRUE(stats.Snapshot(250).running);
+    stats.Stop(300); EXPECT_TRUE(stats.Snapshot(400).Consistent());
+    EXPECT_THROW(stats.Start(std::numeric_limits<double>::quiet_NaN(),16),std::invalid_argument);
+}
+TEST_F(StorageTest, SessionReportsRejectUnavailableAndInconsistentSnapshots) {
+    using namespace superior::present;
+    const auto report=directory/"session.json";
+    EXPECT_FALSE(SaveSessionReport(report,{}));
+    SessionStats stats; stats.Start(0,16); stats.Receive(true); stats.Schedule(false); stats.Stop(20);
+    ASSERT_TRUE(SaveSessionReport(report,stats.Snapshot(20)));
+    std::string text; ASSERT_TRUE(ReadText(report,text));
+    EXPECT_NE(text.find("\"submitted_s_ok\": 0"),std::string::npos);
+    EXPECT_NE(text.find("\"render_and_present_call_wall_ms\": null"),std::string::npos);
+    auto bad=stats.Snapshot(20); ++bad.real.scheduled;
+    EXPECT_FALSE(SaveSessionReport(report,bad));
+    std::string after; ASSERT_TRUE(ReadText(report,after)); EXPECT_EQ(after,text);
+}
+TEST(Session, SyntheticOperationSequenceAlwaysPreservesAccounting) {
+    using namespace superior::present;
+    SessionStats stats; stats.Start(0,16);
+    uint32_t state=12345;
+    for(int i=0;i<3000;++i) {
+        state=state*1664525u+1013904223u;
+        const bool generated=(state & 1)!=0;
+        switch((state>>1)%4) {
+            case 0: stats.Schedule(generated); break;
+            case 1: stats.Complete(generated,Outcome::Submitted,i,i,i+1); break;
+            case 2: stats.Discard(generated,DropReason::NewCapture); break;
+            case 3: stats.Receive((state & 8)!=0); break;
+        }
+        ASSERT_TRUE(stats.Snapshot(i+1).Consistent());
+    }
+    stats.Stop(4000); EXPECT_TRUE(stats.Snapshot(5000).Consistent());
+}
+TEST(Session, StopWhilePausedFreezesElapsedAndPausedTime) {
+    using namespace superior::present;
+    SessionStats stats; stats.Start(0,16); stats.Pause(true,10); stats.Stop(30);
+    const auto s=stats.Snapshot(1000);
+    EXPECT_DOUBLE_EQ(s.elapsedMs,30); EXPECT_DOUBLE_EQ(s.pausedMs,20); EXPECT_DOUBLE_EQ(s.activeMs,10);
+    EXPECT_FALSE(s.paused); EXPECT_FALSE(s.running); EXPECT_TRUE(s.Consistent());
+}
+TEST(Session, NonfiniteMeasurementDoesNotInventTimingSamples) {
+    using namespace superior::present;
+    SessionStats stats; stats.Start(0,16); stats.Schedule(false);
+    const double missing=std::numeric_limits<double>::quiet_NaN();
+    EXPECT_TRUE(stats.Complete(false,Outcome::Submitted,missing,missing,missing));
+    const auto s=stats.Snapshot(10);
+    EXPECT_EQ(s.real.submitted,1u); EXPECT_EQ(s.callWallMs.samples,0u);
+    EXPECT_EQ(s.lateStartMs.samples,0u); EXPECT_EQ(s.returnIntervalMs.samples,0u);
+    EXPECT_TRUE(s.Consistent());
+}

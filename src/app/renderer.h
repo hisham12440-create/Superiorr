@@ -21,6 +21,7 @@ struct FlowStats {
 };
 
 enum class Src { Cur, Mid };
+enum class PresentResult { Submitted, Occluded, OtherStatus };
 
 // All GPU work. Every COM object is held in a ComPtr (RAII); every D3D call is checked
 // and failures throw std::runtime_error.
@@ -44,7 +45,7 @@ public:
     void BeginGpuTiming();
     void EndGpuTiming();
     void RenderMid(float phase);
-    void PresentFinal(Src s, const Settings& st, float phase = .5f);
+    PresentResult PresentFinal(Src s, const Settings& st, float phase = .5f);
 
 private:
     struct Tex {

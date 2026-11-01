@@ -128,6 +128,7 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
     ImGui::Separator();
     localized::Text("SESSION   %s", localized::Value(!running ? "Ready" : paused ? "Paused - game not foreground" : "Capturing").c_str());
     localized::TextWrapped("Use your Start / stop shortcut on the borderless game, or tray > Start with a 3-second delay. Close this panel to keep Superior in the tray.");
+    DrawSession();
     localized::SeparatorText("HARDWARE / EFFICIENCY");
     localized::TextWrapped("%s | %s | Tier %s", hw.adapter.c_str(), hw.vendor.c_str(), localized::Value(hardware::TierName(hw.tier)).c_str());
     localized::Text("Dedicated %.0f MiB | Shared %.0f MiB", static_cast<double>(hw.dedicated) / hardware::MiB, static_cast<double>(hw.shared) / hardware::MiB);
@@ -235,6 +236,53 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
     target = nullptr;
     context_->OMSetRenderTargets(1, &target, nullptr);
 }
+void Panel::DrawSession() {
+    if (!localized::CollapsingHeader("SESSION OBSERVATIONS")) return;
+    if (!session_.available) { localized::TextWrapped("Start capture to collect session observations"); return; }
+    localized::TextWrapped("API-side counters, not displayed FPS or ghost-free frame counts");
+    localized::Text("Elapsed %.1f s | Active %.1f s | Paused %.1f s", session_.elapsedMs/1000, session_.activeMs/1000, session_.pausedMs/1000);
+    localized::Text("Delivered %llu | Accepted %llu | Ignored while paused %llu",
+        static_cast<unsigned long long>(session_.received), static_cast<unsigned long long>(session_.accepted), static_cast<unsigned long long>(session_.ignoredWhilePaused));
+    localized::Text("Last planned multiplier x%d", session_.plannedMultiplier);
+    const auto row=[](const char* label,const present::FrameCounts& c) {
+        localized::SeparatorText(label);
+        localized::Text("Scheduled %llu | S_OK %llu | Pending %llu", static_cast<unsigned long long>(c.scheduled),static_cast<unsigned long long>(c.submitted),static_cast<unsigned long long>(c.pending));
+        localized::Text("Discarded %llu | Occluded %llu | Other %llu | Failed %llu",static_cast<unsigned long long>(c.discarded),static_cast<unsigned long long>(c.occluded),static_cast<unsigned long long>(c.otherStatus),static_cast<unsigned long long>(c.failed));
+    };
+    row("Real-frame path",session_.real); row("Generated-frame path (may use shader fallback)",session_.generated);
+    localized::Text("Drops: replaced %llu | pause %llu | resize %llu | stop %llu",static_cast<unsigned long long>(session_.replaced),static_cast<unsigned long long>(session_.droppedOnPause),static_cast<unsigned long long>(session_.droppedOnResize),static_cast<unsigned long long>(session_.droppedOnStop));
+    if (session_.callWallMs.samples) localized::Text("Render + Present call wall time: mean %.2f ms | max %.2f ms",session_.callWallMs.Mean(),session_.callWallMs.maximum);
+    if (session_.lateStartMs.samples) localized::Text("Start lateness: mean %.2f ms | max %.2f ms",session_.lateStartMs.Mean(),session_.lateStartMs.maximum);
+    if (session_.returnIntervalMs.samples) localized::Text("Between S_OK returns: mean %.2f ms | max %.2f ms",session_.returnIntervalMs.Mean(),session_.returnIntervalMs.maximum);
+    localized::TextWrapped("S_OK is an accepted Present call, not proof that a frame reached the screen. Timings above are CPU wall times, not GPU latency.");
+    ImGui::BeginDisabled(OfflineBusy());
+    if (localized::Button("Export session JSON")) ExportSession();
+    ImGui::EndDisabled();
+    if (!sessionStatus_.empty()) localized::TextWrapped("%s",sessionStatus_.c_str());
+}
+void Panel::ExportSession() {
+    if (!session_.available || OfflineBusy()) return;
+    toolDialogOpen_=true; cancelDialog_=false;
+    struct DialogScope { bool& open; ~DialogScope() { open=false; } } scope{toolDialogOpen_};
+    std::vector<wchar_t> file(32768);
+    const std::wstring name=L"Superior-session.json";
+    std::copy(name.begin(),name.end(),file.begin());
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize=sizeof dialog; dialog.hwndOwner=window_;
+    dialog.lpstrFile=file.data(); dialog.nMaxFile=static_cast<DWORD>(file.size());
+    dialog.lpstrFilter=L"JSON report (*.json)\0*.json\0\0"; dialog.lpstrDefExt=L"json";
+    dialog.Flags=OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+    dialog.lpstrTitle=settings_->language=="ar" ? L"حفظ تقرير الجلسة" : L"Save session report";
+    // Freeze exactly the snapshot visible when export was requested; capture may
+    // stop while the modal dialog pumps messages, without changing this report.
+    const auto snapshot=session_;
+    if (!GetSaveFileNameW(&dialog) || cancelDialog_) {
+        if (CommDlgExtendedError()) sessionStatus_="Session report dialog failed";
+        return;
+    }
+    sessionStatus_=present::SaveSessionReport(std::filesystem::path(file.data()),snapshot) ? "Session snapshot exported" : "Session report export failed";
+}
+
 void Panel::PollTools() {
     if (!verification_.valid() || verification_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) return;
     try {

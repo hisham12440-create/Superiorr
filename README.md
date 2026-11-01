@@ -217,13 +217,14 @@ WGC GPU frames -> prev/current textures -> bidirectional block matching
 core/         config, files, hotkeys, profiles, log, timing/pacing
 hardware/     DXGI/power monitor and conservative policy
 interpolate/  CPU phase scheduling / selection
+present/      API-side session counters and JSON snapshots
 benchmark/    offline PGM metrics and verification
 neural/       optional offline DirectML command
 ui/           blue/black ImGui + Windows Arabic text layer
 app/          capture, renderer, tray/session orchestration
 ```
 
-46 CPU tests cover config, reference OLED curve, timing/pacing, budgets/governor,
+56 CPU tests cover config, reference OLED curve, timing/pacing, budgets/governor,
 hotkey validation, Unicode storage/log rotation, profiles, phase scheduling,
 analytic metric cases, PGM handling and input preservation. CI also starts the
 Windows EXE's verifier on an identical-image fixture and checks the neural
@@ -282,3 +283,42 @@ full-size double edge maps. Four maximum-size float images require approximately
 JSON, optional runtimes and driver allocations are additional. This is still an
 offline evaluator, not a recorder or a live shader quality test. GUI responsiveness,
 file pickers, shutdown/cancellation and real-GPU behavior need manual validation.
+
+
+## Session observations and export
+
+The **SESSION OBSERVATIONS** panel shows the current or most recently stopped
+session. Counts reset only after a new session starts. It separates delivered
+capture callbacks, frames accepted for processing, and callbacks ignored while
+paused. WGC frames discarded inside the capture pool are not observable here;
+these counters are **not game-engine frame counts**.
+
+Each real/generated path accounts for scheduled, S_OK-submitted, occluded,
+other successful status, failed, discarded and pending outputs. Discards are
+classified by replacement on a new capture, pause, source resize or stop. Stop
+drains pending work. CPU tests enforce conservation of the counts. Generated
+path submissions may select a real-frame/cross-fade shader fallback; they do
+not count successfully interpolated or ghost-free images.
+
+Timing samples are CPU wall time around rendering + the Present call, lateness
+at the beginning of that work versus its planned deadline, and intervals
+between S_OK returns. They are **not GPU execution time, scan-out intervals or
+input-to-photon latency**. Pauses do not bridge interval samples. Active and
+paused wall times are separate; stopped snapshots no longer advance. Missing
+samples export as null. No total GPU budget or output FPS claim is inferred.
+
+**Export session JSON** freezes the snapshot visible when export was requested,
+then uses a native save dialog. S_OK means DXGI accepted a call, not proof of
+screen display. The report deliberately contains `scanout_fps: null` and
+`ground_truth_pass_rate: null`. It includes no game image, executable path or
+clip. Export is local and does not upload telemetry. Concurrent offline tools
+and save dialogs are disallowed; exiting while a dialog is open closes it before
+tearing down the panel. File picker/export interaction requires manual Windows
+validation. JSON snapshots are for diagnosis, not benchmark scores.
+
+Manual checks: run x2/x3/x4 sessions, pause/resume, resize the source, replace
+pending work with a faster capture, and stop with a nonempty queue. Export before
+and after stopping; verify each path's scheduled count equals submitted +
+occluded + other + failed + discarded + pending. Test Arabic labels and exiting
+from the tray while the export dialog is open. Device-loss recovery and real
+screen presentation measurements remain future work in the development plan.

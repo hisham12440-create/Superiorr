@@ -10,12 +10,14 @@
 #include <filesystem>
 #include "core/config.h"
 #include "hardware/monitor.h"
+#include "present/session_stats.h"
 namespace superior {
 using ApplyHotkeys = std::function<bool(const Hotkeys&, std::string&)>;
 class Panel {
 public:
     void Open(HINSTANCE instance, ID3D11Device* device, Settings* settings,
               std::function<void()> save, ApplyHotkeys applyHotkeys);
+    void SetSessionSnapshot(const present::SessionSnapshot& snapshot) { session_ = snapshot; }
     void SetProfileStatus(const std::string& text) { profileStatus_ = text; }
     bool OfflineBusy() const { return verification_.valid() || toolDialogOpen_; }
     bool ToolDialogOpen() const { return toolDialogOpen_; }
@@ -30,6 +32,10 @@ private:
         std::atomic<bool> cancel{false};
         std::atomic<size_t> completed{0}, total{0};
     };
+    void DrawSession();
+    void ExportSession();
+    present::SessionSnapshot session_;
+    std::string sessionStatus_;
     void ChooseVerification();
     void DrawVerification(bool running);
     bool toolDialogOpen_ = false, cancelDialog_ = false;

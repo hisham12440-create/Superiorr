@@ -240,3 +240,125 @@ The roadmap's earlier statements about fixed shortcuts, absent per-game image
 profiles and Arabic-path logging are superseded by this section. Full shaped
 Arabic/RTL UI, neural SR, bidirectional flow, real quality benchmarking and the
 99% validation target remain unfinished and unmeasured.
+
+## Arabic rendering, bidirectional interpolation and offline evaluation
+
+### Arabic / English
+
+Choose **Language** in Control Center (or the tray language shortcut). Arabic
+labels are rendered into a bounded UI texture cache through Windows GDI
+`DrawTextW` complex-script shaping and bidi, using the installed Segoe UI font.
+Text/paragraphs align right; Arabic labels sit above numeric sliders and combo
+controls. The original Unicode strings are not reversed. Numeric values,
+Ctrl/Alt/Shift/Win names, file paths and vendor/model names retain their native
+forms. No externally downloaded font is required. The image textures belong to
+the settings UI only; this is not readback of captured game frames.
+
+This is a custom RTL label/layout layer, not a native mirrored ImGui backend.
+Mixed-direction paths, Arabic diacritics, font fallback and high-DPI layout need
+manual Windows verification. OS error details can remain English. The underlying
+Windows window title and some technical terms are unchanged. Texture cache is
+capped at 256 entries / approximately 64 MiB between insertions, and current-frame
+references remain alive through rendering. No screenshot-based localization
+verification has been performed in CI.
+
+### Bidirectional x2 / x3 / x4 (experimental)
+
+The existing shader block matcher now runs in **both** directions. Interpolation
+checks forward/backward consistency at the matched block location, boundary
+validity, colour disagreement, local flow variance and matching error. Failed
+confidence returns to cross-fade; scene cuts/near-static pairs use the current
+real image. Cross-fade itself can show double edges; this is not ghost-free.
+This is still a 16x16 block field, not a hierarchical/subpixel optical-flow engine
+or a full occlusion-aware compositor.
+
+Select a maximum multiplier from 2 through 4. Comfort caps at 2; battery, safe mode,
+memory pressure and timing backoff can disable generation. Multipliers are chosen
+only near an integer ratio of capture-delivery interval to display interval
+(within 0.15). Examples: 30 to 60 Hz = x2, 40 to 120 Hz = x3, 30 to 120 Hz = x4.
+A x4 ratio under Comfort falls back to real frames instead of forcing an uneven
+x2 cadence. The timing samples are delivery times, not the game's internal FPS.
+
+Generated phases are rendered just before presentation at 1/m, 2/m, ... and
+separated by display-interval deadlines. The real frame is last. A newly captured
+pair replaces pending work from an older pair to keep textures/history consistent;
+under jitter or overload pending outputs can be dropped. This bounds queue depth,
+but **does not prove perfect pacing**, presented FPS or latency. Bidirectional
+search costs more GPU time and is unmeasured on actual laptops.
+
+### Ground-truth quality evaluation
+
+The same portable EXE supports a CPU-only offline command (no GPU initialization):
+
+```text
+Superior.exe --verify manifest.json report.json
+```
+
+Use `docs/verification-manifest.example.json` as the manifest shape. Supply
+8-bit normalized grayscale PGM images (P5 binary or P2 ASCII) for each actual
+reference middle frame, generated candidate and two source frames. Relative image
+paths resolve beside the manifest. Limits: 8192x8192 per image, 10,000 frame records,
+8 MiB manifest. A JSON report and `report.json.txt` are written. Exit codes:
+0 = dataset target met; 2 = evaluated but target missed; 1 = invalid input/error.
+
+Metrics are real computations on the supplied images:
+- PSNR on normalized luma; exact matches use JSON null plus `exact_match: true`
+  to represent infinite PSNR without invalid JSON.
+- SSIM using non-overlapping 8x8 box windows, population variance, L=1,
+  K1=.01 and K2=.03 (not Gaussian-window SSIM).
+- Mean absolute difference of normalized Sobel edge magnitude.
+- Source-edge/photometric disagreement coverage, explicitly a **ghosting proxy**.
+  Real motion/disocclusions can trigger it even in a correct frame.
+
+Default pass rule: SSIM >= .95, edge error <= .05, proxy coverage <= 1%.
+The target is 99% of supplied records passing. Thresholds and target are
+configurable. This command **does not create generated frames, record gameplay or
+validate the live shader**. Metrics tests verify formulas/reference cases, not
+99% quality of interpolation. No real-game dataset result has been measured and
+the UI therefore shows `n/a`, never a fabricated live pass rate. Do not interpret
+a result on duplicate/static fixtures as performance on games.
+
+### Optional offline neural SR / DirectML
+
+```text
+Superior.exe --neural input.pgm output.pgm model.onnx
+```
+
+This is a real optional ONNX Runtime DirectML inference path for **offline luma
+images**, not a live neural checkbox. Put a trusted DirectML-enabled ONNX Runtime
+1.20.1-compatible `onnxruntime.dll` and its required DirectML/runtime dependencies
+inside `Superior/` next to the EXE. DLL resolution is restricted to that directory
+and Windows system directories. The live app never loads these DLLs and continues
+using spatial upscale when they are absent.
+
+Supply a model with one float32 NCHW `[1,1,H,W]` input and one same-aspect
+`[1,1,sH,sW]` output, scale 1–4. Input is limited to 1024x1024. Place its license
+text at `model.onnx.license.txt`. This is a required local record, **not automated
+license verification**. No model, model license rights, or runtime DLLs are bundled
+or downloaded automatically. ONNX Runtime's C API header is pinned by SHA256 at
+build time (MIT project: https://github.com/microsoft/onnxruntime).
+
+The command disables ORT telemetry and CPU execution-provider fallback, uses
+sequential execution, and exports `output.pgm.report.json` with measured wall time
+for session creation and inference or an explicit error. These are not GPU-stage
+measurements or quality claims. Only trusted models/DLLs should be loaded.
+Offline tensors use CPU staging by design; **this path is never called from live
+capture**. Live zero-readback D3D11/D3D12 tensor interop, tiled neural SR, model
+license review, FP16/INT8 qualification and per-machine quality/performance gates
+remain unimplemented. Missing/incompatible optional components do not stop the
+normal app from starting.
+
+### Required manual checks
+
+- Switch Arabic/English repeatedly; inspect connected Arabic letters, lam-alef,
+  mixed Arabic/Latin paths, dropdowns, scrolling and scaling at 100/150/200% DPI.
+- Try x2 on 30/60, x3 on 40/120, x4 on 30/120; inspect fast motion, cuts and HUD.
+  Check Comfort, battery and safe-mode fallback. Record capture/present cadence.
+- Evaluate actual exported candidate/reference frame pairs with `--verify`.
+- Test `--neural` with missing dependencies, then a reviewed luma model on a DX12
+  machine. No neural model run has been verified by this repository's CPU CI.
+
+This section supersedes earlier x2-only/Arabic-absent status text, but it does not
+mean all 13 requested stages are complete. Runtime per-generated-frame validation,
+corpus recording, live learned SR, layered/higher-order flow and a verified 99%
+pass rate are still missing. The application remains experimental.

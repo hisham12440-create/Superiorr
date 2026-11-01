@@ -10,6 +10,7 @@ namespace superior {
 
 void Settings::Clamp() {
     if (language != "en" && language != "ar") language = "en";
+    maxMultiplier = std::clamp(maxMultiplier, 2, 4);
     comfortMode = std::min(2, std::max(0, comfortMode));
     oledLevel = std::min(3, std::max(0, oledLevel));
     oledIntensity = std::min(1.0f, std::max(0.0f, oledIntensity));
@@ -37,6 +38,7 @@ std::string ToJson(const Settings& s) {
     j["oled_level"] = s.oledLevel;
     j["oled_intensity"] = s.oledIntensity;
     j["sharpness"] = s.sharpness;
+    j["max_multiplier"] = s.maxMultiplier;
     j["frame_gen"] = s.frameGen;
     j["anti_alias"] = s.antiAlias;
     j["vibrance"] = s.vibrance;
@@ -71,6 +73,7 @@ bool FromJson(const std::string& text, Settings& out) {
         s.oledLevel = j.value("oled_level", s.oledLevel);
         s.oledIntensity = j.value("oled_intensity", s.oledIntensity);
         s.sharpness = j.value("sharpness", s.sharpness);
+        s.maxMultiplier = j.value("max_multiplier", s.maxMultiplier);
         s.frameGen = j.value("frame_gen", s.frameGen);
         s.antiAlias = j.value("anti_alias", s.antiAlias);
         s.vibrance = j.value("vibrance", s.vibrance);

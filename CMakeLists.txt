@@ -13,7 +13,7 @@ FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download
 FetchContent_MakeAvailable(json)
 
 # ---- core: pure C++ logic, testable on CI without a GPU --------------------
-add_library(superior_core STATIC src/core/log.cpp src/core/config.cpp src/core/files.cpp src/core/profiles.cpp)
+add_library(superior_core STATIC src/core/log.cpp src/core/config.cpp src/core/files.cpp src/core/profiles.cpp src/benchmark/quality.cpp)
 target_include_directories(superior_core PUBLIC src)
 target_link_libraries(superior_core PUBLIC nlohmann_json::nlohmann_json)
 if(WIN32)
@@ -37,14 +37,20 @@ endif()
 
 # ---- the application (Windows only) -----------------------------------------
 if(WIN32)
+  FetchContent_Declare(ort_c_api
+    URL https://github.com/microsoft/onnxruntime/raw/refs/tags/v1.20.1/include/onnxruntime/core/session/onnxruntime_c_api.h
+    URL_HASH SHA256=573a117ae6b83ead7f53da6cedaa0d7b7d9cdb45c0ba4726bac9081e67696a82
+    DOWNLOAD_NO_EXTRACT TRUE)
+  FetchContent_MakeAvailable(ort_c_api)
   FetchContent_Declare(imgui URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.8.zip)
   FetchContent_MakeAvailable(imgui)
-  add_library(superior_ui STATIC src/ui/panel.cpp
+  add_library(superior_ui STATIC src/ui/panel.cpp src/ui/localized.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
   target_include_directories(superior_ui PUBLIC src PRIVATE ${imgui_SOURCE_DIR})
+  target_compile_options(superior_ui PRIVATE /utf-8)
   target_compile_definitions(superior_ui PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
   target_link_libraries(superior_ui PRIVATE d3d11 dxgi d3dcompiler dwmapi)
   # Compile application shaders on Windows and embed bytecode, never compile
@@ -86,10 +92,10 @@ if(WIN32)
   file(WRITE ${GEN_DIR}/shaders_gen.h "${SHADER_INCLUDES}")
   add_custom_target(superior_shaders DEPENDS ${SHADER_HEADERS})
 
-  add_executable(Superior WIN32 src/app/main.cpp src/app/capture.cpp src/app/renderer.cpp src/hardware/monitor.cpp)
+  add_executable(Superior WIN32 src/app/main.cpp src/app/capture.cpp src/app/renderer.cpp src/hardware/monitor.cpp src/neural/offline.cpp)
   add_dependencies(Superior superior_shaders)
   set_target_properties(Superior PROPERTIES OUTPUT_NAME "Superior" CXX_STANDARD 20)
-  target_include_directories(Superior PRIVATE src ${GEN_DIR})
+  target_include_directories(Superior PRIVATE src ${GEN_DIR} ${ort_c_api_SOURCE_DIR})
   target_compile_definitions(Superior PRIVATE _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
                                               WINVER=0x0A00 _WIN32_WINNT=0x0A00 UNICODE _UNICODE)
   target_compile_options(Superior PRIVATE /W4 /utf-8 /permissive- /EHsc)

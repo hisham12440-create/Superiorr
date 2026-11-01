@@ -6,6 +6,7 @@ Texture2D<float4> tA : register(t0);   // PSMid: previous frame   | PSFinal: fra
 Texture2D<float4> tB : register(t1);   // PSMid: current frame
 Texture2D<float4> tFlow : register(t2);
 StructuredBuffer<uint> tStats : register(t3);
+Texture2D<float4> tReverseFlow : register(t4);
 SamplerState sLin : register(s0);
 
 cbuffer CB : register(b0)
@@ -24,7 +25,8 @@ cbuffer CB : register(b0)
     float brightness;
     float gamma;
     float splitPreview;
-    float3 cbPadding;
+    float phase;
+    float2 cbPadding;
 };
 
 struct VSOut
@@ -73,19 +75,27 @@ float4 PSMid(VSOut i) : SV_Target
     float2 uv = pc / srcSize;
     float3 a0 = tA.SampleLevel(sLin, uv, 0).rgb;
     float3 b0 = tB.SampleLevel(sLin, uv, 0).rgb;
-    float3 xfade = 0.5 * (a0 + b0);
+    float t = saturate(phase);
+    float3 xfade = lerp(a0, b0, t);
 
     // Object at current position C was at C+v in the previous frame; midpoint M = C + v/2.
-    float3 pw = tA.SampleLevel(sLin, (pc + 0.5 * v) / srcSize, 0).rgb;
-    float3 cw = tB.SampleLevel(sLin, (pc - 0.5 * v) / srcSize, 0).rgb;
-    float3 warped = 0.5 * (pw + cw);
+    float3 pw = tA.SampleLevel(sLin, (pc + t * v) / srcSize, 0).rgb;
+    float3 cw = tB.SampleLevel(sLin, (pc - (1.0 - t) * v) / srcSize, 0).rgb;
+    float3 warped = lerp(pw, cw, t);
+    // Sample the reverse field at the matching previous-frame location.
+    int2 reverseBlock = clamp(int2((pc + v) / 16.0), int2(0,0), maxB);
+    float4 reverse = tReverseFlow.Load(int3(reverseBlock, 0));
+    float fbError = length(v + reverse.xy);
+    float consistency = saturate(1.0 - fbError / 2.5);
+    bool inBounds = all(pc + t*v >= 0) && all(pc + t*v < srcSize) &&
+                    all(pc - (1.0-t)*v >= 0) && all(pc - (1.0-t)*v < srcSize);
 
     float d = dot(abs(pw - cw), float3(0.3333, 0.3333, 0.3333));
     float cColor = saturate(1.0 - d / 0.08);
     float cVar = saturate(1.0 - varMax / 5.0);
     float cSad = saturate(1.0 - f0.z / 0.06);
     float cFast = saturate(1.0 - (length(v) - 40.0) / 20.0);
-    float conf = cColor * cVar * cSad * cFast;
+    float conf = cColor * cVar * cSad * cFast * consistency * (inBounds ? 1.0 : 0.0);
     conf = smoothstep(0.35, 0.8, conf);
 
     // Low confidence -> plain cross-fade, never a warped smear.

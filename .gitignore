@@ -6,3 +6,5 @@ settings.json
 
 profiles/
 .superior-write-probe*
+
+.cache/

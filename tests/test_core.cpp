@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <limits>
+#include <stdexcept>
 
 #include "core/config.h"
 #include "core/oled_curve.h"
@@ -358,4 +360,97 @@ TEST_F(StorageTest, UnicodeLogAndRotation) {
     std::string text;
     ASSERT_TRUE(ReadText(path, text));
     EXPECT_NE(text.find("after rotation"), std::string::npos);
+}
+
+#include "interpolate/pacer.h"
+#include "benchmark/quality.h"
+TEST(Interpolation, MultiplierSelectionRespectsRefreshAndComfortCap) {
+    using namespace superior::interpolate;
+    EXPECT_EQ(ChooseMultiplier(33.333,16.667,20,2),2);
+    EXPECT_EQ(ChooseMultiplier(25,8.333,20,4),3);
+    EXPECT_EQ(ChooseMultiplier(33.333,8.333,20,4),4);
+    EXPECT_EQ(ChooseMultiplier(33.333,8.333,20,2),1); // Comfort cannot fill x4 cadence.
+    EXPECT_EQ(ChooseMultiplier(25,16.667,20,4),1); // Noninteger ratio.
+    EXPECT_EQ(ChooseMultiplier(16,8,0,4),1);
+    EXPECT_EQ(ChooseMultiplier(std::numeric_limits<double>::infinity(),8,20,4),1);
+}
+TEST(Interpolation, AllPhasesHaveOneDisplayIntervalSpacing) {
+    for(int multiplier=2;multiplier<=4;++multiplier) {
+        const auto samples=superior::interpolate::Schedule(multiplier,100,8);
+        ASSERT_EQ(samples.size(),static_cast<size_t>(multiplier));
+        EXPECT_DOUBLE_EQ(samples.front().dueMs,100);
+        EXPECT_FLOAT_EQ(samples.back().phase,1);
+        for(size_t i=1;i<samples.size();++i) {
+            EXPECT_DOUBLE_EQ(samples[i].dueMs-samples[i-1].dueMs,8);
+            EXPECT_GT(samples[i].phase,samples[i-1].phase);
+        }
+    }
+    EXPECT_TRUE(superior::interpolate::Schedule(5,0,8).empty());
+}
+TEST(Interpolation, OppositeFlowIsConsistent) {
+    EXPECT_DOUBLE_EQ(superior::interpolate::ForwardBackwardError(3,4,-3,-4),0);
+    EXPECT_DOUBLE_EQ(superior::interpolate::ForwardBackwardError(3,4,0,0),5);
+}
+TEST(Quality, IdenticalImagesHaveExactKnownMetrics) {
+    using namespace superior::benchmark;
+    Image a{4,1,{0,0,1,1}};
+    const auto m=Compare(a,a,a,a);
+    EXPECT_DOUBLE_EQ(m.ssim,1);
+    EXPECT_DOUBLE_EQ(m.edgeError,0);
+    EXPECT_TRUE(m.exact);
+    EXPECT_TRUE(std::isinf(m.psnr));
+    EXPECT_TRUE(Pass(m,{}));
+}
+TEST(Quality, OppositeConstantsHaveAnalyticSsimAndPsnr) {
+    using namespace superior::benchmark;
+    Image black{8,8,std::vector<float>(64,0)},white{8,8,std::vector<float>(64,1)};
+    const auto m=Compare(black,white,black,black);
+    EXPECT_NEAR(m.ssim,.0001/1.0001,1e-12);
+    EXPECT_DOUBLE_EQ(m.psnr,0);
+    EXPECT_FALSE(Pass(m,{}));
+}
+TEST(Quality, SobelEdgeErrorReferenceAndInvalidInput) {
+    using namespace superior::benchmark;
+    Image black{4,1,{0,0,0,0}},step{4,1,{0,0,1,1}};
+    const auto m=Compare(black,step,black,black);
+    EXPECT_DOUBLE_EQ(m.edgeError,.5);
+    EXPECT_GT(m.flaggedPercent,0);
+    Image invalid{1,1,{std::numeric_limits<float>::quiet_NaN()}};
+    EXPECT_THROW(Compare(invalid,invalid,invalid,invalid),std::runtime_error);
+    Metrics fake; fake.ssim=1; fake.edgeError=-1;
+    EXPECT_FALSE(Pass(fake,{}));
+}
+TEST_F(StorageTest, PgmRoundTripAndReferenceVerificationExports) {
+    using namespace superior::benchmark;
+    Image image{8,8,std::vector<float>(64,.5f)};
+    WritePgm(directory/"frame.pgm",image);
+    const auto restored=ReadPgm(directory/"frame.pgm");
+    EXPECT_EQ(restored.width,8);
+    EXPECT_NEAR(restored.pixels[0],.5f,1.f/255);
+    const auto manifest=directory/"manifest.json",report=directory/"report.json";
+    ASSERT_TRUE(WriteTextAtomic(manifest,R"({"frames":[{"truth":"frame.pgm","generated":"frame.pgm","source_a":"frame.pgm","source_b":"frame.pgm"}]})"));
+    EXPECT_EQ(Verify(manifest,report),0);
+    std::string text;
+    ASSERT_TRUE(ReadText(report,text));
+    EXPECT_NE(text.find("\"target_achieved\": true"),std::string::npos);
+    EXPECT_TRUE(std::filesystem::exists(directory/"report.json.txt"));
+    ASSERT_TRUE(WriteTextAtomic(manifest,R"({"frames":[]})"));
+    EXPECT_EQ(Verify(manifest,report),1);
+    ASSERT_TRUE(ReadText(report,text));
+    EXPECT_NE(text.find("\"target_achieved\": false"),std::string::npos);
+}
+TEST_F(StorageTest, TruncatedAndUnsupportedPgmAreRejected) {
+    using namespace superior::benchmark;
+    ASSERT_TRUE(WriteTextAtomic(directory/"bad.pgm","P5\n2 2\n255\nx"));
+    EXPECT_THROW(ReadPgm(directory/"bad.pgm"),std::runtime_error);
+    ASSERT_TRUE(WriteTextAtomic(directory/"bad.pgm","P5\n1 1\n65535\nx"));
+    EXPECT_THROW(ReadPgm(directory/"bad.pgm"),std::runtime_error);
+}
+TEST(Config, GenerationMultiplierRoundTripAndClamp) {
+    Settings settings;
+    ASSERT_TRUE(FromJson(R"({"max_multiplier":99})",settings));
+    EXPECT_EQ(settings.maxMultiplier,4);
+    Settings restored;
+    ASSERT_TRUE(FromJson(ToJson(settings),restored));
+    EXPECT_EQ(restored.maxMultiplier,4);
 }

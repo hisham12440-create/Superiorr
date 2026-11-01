@@ -1,0 +1,16 @@
+{
+  "thresholds": {
+    "ssim": 0.95,
+    "edge_error": 0.05,
+    "flagged_percent": 1.0,
+    "target_percent": 99.0
+  },
+  "frames": [
+    {
+      "truth": "clips/frame-001.pgm",
+      "generated": "clips/generated-001.pgm",
+      "source_a": "clips/frame-000.pgm",
+      "source_b": "clips/frame-002.pgm"
+    }
+  ]
+}

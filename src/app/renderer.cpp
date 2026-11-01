@@ -30,7 +30,7 @@ struct RenderCb {
     float offX, offY, scale, frame;
     float sharp, oledLevel, oledIntensity, vibrance;
     float contrast, saturation, brightness, gamma;
-    float splitPreview, pad0, pad1, pad2;
+    float splitPreview, phase, pad1, pad2;
 };
 static_assert(sizeof(RenderCb) == 80, "constant buffer layout");
 
@@ -211,6 +211,8 @@ void Renderer::DestroyOutput() {
     mid_ = Tex{};
     aa_ = Tex{};
     up_ = Tex{};
+    flowUav_.Reset(); flowSrv_.Reset(); flowTex_.Reset();
+    reverseFlowUav_.Reset(); reverseFlowSrv_.Reset(); reverseFlowTex_.Reset();
     srcW_ = srcH_ = 0;
     frames_ = 0;
 }
@@ -258,6 +260,10 @@ void Renderer::SetSourceSize(UINT w, UINT h) {
     HR(dev_->CreateTexture2D(&fd, nullptr, &flowTex_));
     HR(dev_->CreateShaderResourceView(flowTex_.Get(), nullptr, &flowSrv_));
     HR(dev_->CreateUnorderedAccessView(flowTex_.Get(), nullptr, &flowUav_));
+    reverseFlowUav_.Reset(); reverseFlowSrv_.Reset(); reverseFlowTex_.Reset();
+    HR(dev_->CreateTexture2D(&fd, nullptr, &reverseFlowTex_));
+    HR(dev_->CreateShaderResourceView(reverseFlowTex_.Get(), nullptr, &reverseFlowSrv_));
+    HR(dev_->CreateUnorderedAccessView(reverseFlowTex_.Get(), nullptr, &reverseFlowUav_));
     SLOG("Source size %ux%u, flow grid %ux%u", w, h, blocksX_, blocksY_);
 }
 
@@ -294,6 +300,16 @@ void Renderer::ComputeFlow() {
     ctx_->CSSetConstantBuffers(0, 1, cbs);
     ctx_->Dispatch(blocksX_, blocksY_, 1);
 
+    // A second independent search produces prev -> cur motion. Both directions
+    // contribute to the scene-cut/static counters, without CPU readback.
+    ID3D11UnorderedAccessView* unbind[2] = {nullptr, nullptr};
+    ctx_->CSSetUnorderedAccessViews(0, 2, unbind, nullptr);
+    ID3D11ShaderResourceView* reverseSources[2] = {cur_.srv.Get(), prev_.srv.Get()};
+    ctx_->CSSetShaderResources(0, 2, reverseSources);
+    ID3D11UnorderedAccessView* reverseTargets[2] = {reverseFlowUav_.Get(), statsUav_.Get()};
+    ctx_->CSSetUnorderedAccessViews(0, 2, reverseTargets, nullptr);
+    ctx_->Dispatch(blocksX_, blocksY_, 1);
+
     ID3D11UnorderedAccessView* nullUav[2] = {nullptr, nullptr};
     ctx_->CSSetUnorderedAccessViews(0, 2, nullUav, nullptr);
     ID3D11ShaderResourceView* nullSrv[2] = {nullptr, nullptr};
@@ -302,8 +318,9 @@ void Renderer::ComputeFlow() {
 
 }
 
-void Renderer::RenderMid() {
+void Renderer::RenderMid(float phase) {
     RenderCb cb{};
+    cb.phase = std::clamp(phase, 0.0f, 1.0f);
     cb.srcW = static_cast<float>(srcW_);
     cb.srcH = static_cast<float>(srcH_);
     UpdateCb(cbRender_.Get(), &cb, sizeof cb);
@@ -315,16 +332,16 @@ void Renderer::RenderMid() {
     ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ctx_->VSSetShader(vs_.Get(), nullptr, 0);
     ctx_->PSSetShader(psMid_.Get(), nullptr, 0);
-    ID3D11ShaderResourceView* srvs[4] = {prev_.srv.Get(), cur_.srv.Get(), flowSrv_.Get(), statsSrv_.Get()};
-    ctx_->PSSetShaderResources(0, 4, srvs);
+    ID3D11ShaderResourceView* srvs[5] = {prev_.srv.Get(), cur_.srv.Get(), flowSrv_.Get(), statsSrv_.Get(), reverseFlowSrv_.Get()};
+    ctx_->PSSetShaderResources(0, 5, srvs);
     ID3D11SamplerState* smp = sampler_.Get();
     ctx_->PSSetSamplers(0, 1, &smp);
     ID3D11Buffer* cbs[1] = {cbRender_.Get()};
     ctx_->PSSetConstantBuffers(0, 1, cbs);
     ctx_->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nulls[4] = {nullptr, nullptr, nullptr, nullptr};
-    ctx_->PSSetShaderResources(0, 4, nulls);
+    ID3D11ShaderResourceView* nulls[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    ctx_->PSSetShaderResources(0, 5, nulls);
     ID3D11RenderTargetView* nullRtv = nullptr;
     ctx_->OMSetRenderTargets(1, &nullRtv, nullptr);
 }
@@ -349,8 +366,9 @@ void Renderer::Draw(ID3D11RenderTargetView* rtv, UINT w, UINT h, ID3D11PixelShad
     ctx_->OMSetRenderTargets(1, &nullRtv, nullptr);
 }
 
-void Renderer::PresentFinal(Src s, const Settings& st) {
+void Renderer::PresentFinal(Src s, const Settings& st, float phase) {
     BeginGpuTiming();
+    if (s == Src::Mid) RenderMid(phase);
     const float scale = std::min(static_cast<float>(outW_) / srcW_, static_cast<float>(outH_) / srcH_);
     RenderCb cb{};
     cb.srcW = static_cast<float>(srcW_);

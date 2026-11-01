@@ -20,6 +20,9 @@
 #include "core/log.h"
 #include "core/pacing.h"
 #include "ui/panel.h"
+#include "interpolate/pacer.h"
+#include "benchmark/quality.h"
+#include "neural/offline.h"
 
 using namespace superior;
 
@@ -52,7 +55,8 @@ struct App {
     NOTIFYICONDATAW nid{};
 
     bool running = false;
-    std::deque<Src> queue;
+    struct QueuedFrame { Src source; float phase; double dueMs; };
+    std::deque<QueuedFrame> queue;
     IntervalEma ema;
     double lastFrameMs = 0.0;
     double displayIntervalMs = 16.667;
@@ -258,16 +262,14 @@ void OnFrame(ID3D11Texture2D* tex, UINT w, UINT h) {
     g.srcH = h;
 
     g.queue.clear();
-    const bool canGen = g.st.frameGen && !g.safeMode && g.monitor.Data().allowGeneration && g.gfx.FramesHeld() >= 2 &&
-                        ShouldGenerate(g.ema.Value(), g.displayIntervalMs, g.ema.Count());
-    g.genActive = false;
-    if (canGen) {
-        g.gfx.ComputeFlow();
-        g.gfx.RenderMid();
-        g.queue.push_back(Src::Mid);
-        g.genActive = true; // Shader selects the current frame on scene cuts/static pairs.
-    }
-    g.queue.push_back(Src::Cur);
+    const int maximum = g.st.comfortMode == 0 ? 2 : g.st.maxMultiplier;
+    int multiplier = interpolate::ChooseMultiplier(g.ema.Value(), g.displayIntervalMs, g.ema.Count(), maximum);
+    const bool canGen = g.st.frameGen && !g.safeMode && g.monitor.Data().allowGeneration && g.gfx.FramesHeld() >= 2 && multiplier > 1;
+    g.genActive = canGen;
+    if (canGen) g.gfx.ComputeFlow();
+    else multiplier = 1;
+    for (const auto& sample : interpolate::Schedule(multiplier, now, g.displayIntervalMs))
+        g.queue.push_back({sample.phase < 1 ? Src::Mid : Src::Cur, sample.phase, sample.dueMs});
     g.gfx.EndGpuTiming();
 }
 
@@ -285,10 +287,11 @@ void Tick(bool ready) {
         if (!g.paused) OnFrame(tex, w, h);
     });
 
-    if (!g.queue.empty() && g.gfx.Waitable() && (ready || WaitForSingleObject(g.gfx.Waitable(), 0) == WAIT_OBJECT_0)) {
-        const Src s = g.queue.front();
+    if (!g.queue.empty() && NowMs() >= g.queue.front().dueMs && g.gfx.Waitable() &&
+        (ready || WaitForSingleObject(g.gfx.Waitable(), 0) == WAIT_OBJECT_0)) {
+        const auto sample = g.queue.front();
         g.queue.pop_front();
-        g.gfx.PresentFinal(s, g.st);
+        g.gfx.PresentFinal(sample.source, g.st, sample.phase);
     }
 
     if (g.cap.Closed() || !IsWindow(g.target)) {
@@ -401,6 +404,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     int argumentCount = 0;
     wchar_t** arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
     if (arguments) {
+        if (argumentCount == 5 && wcscmp(arguments[1], L"--neural") == 0) {
+            std::vector<wchar_t> exe(32768);
+            const DWORD count = GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size()));
+            if (!count || count >= exe.size()) { LocalFree(arguments); return 1; }
+            const auto runtime = std::filesystem::path(std::wstring(exe.data(),count)).parent_path() / L"Superior";
+            const std::filesystem::path input(arguments[2]), output(arguments[3]), model(arguments[4]);
+            LocalFree(arguments);
+            return neural::RunOffline(runtime,input,output,model);
+        }
+        if (argumentCount == 4 && wcscmp(arguments[1], L"--verify") == 0) {
+            const std::filesystem::path manifest(arguments[2]), report(arguments[3]);
+            LocalFree(arguments);
+            return benchmark::Verify(manifest, report);
+        }
         for (int i = 1; i < argumentCount; ++i)
             if (wcscmp(arguments[i], L"--safe") == 0) g.safeMode = true;
         LocalFree(arguments);
@@ -521,8 +538,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     while (!quit) {
         HANDLE handles[2] = {g.frameEvent.Get(), g.gfx.Waitable()};
         DWORD n = 1;
-        if (g.running && !g.queue.empty() && handles[1]) n = 2;
-        const DWORD wake = MsgWaitForMultipleObjects(n, handles, FALSE, g.panel.Visible() ? 16 : g.running ? 100 : INFINITE, QS_ALLINPUT);
+        if (g.running && !g.queue.empty() && handles[1] && NowMs() >= g.queue.front().dueMs) n = 2;
+        DWORD timeout = g.panel.Visible() ? 16 : g.running ? 100 : INFINITE;
+        if (g.running && !g.queue.empty()) timeout = std::min(timeout, static_cast<DWORD>(std::max(1.0, std::ceil(g.queue.front().dueMs - NowMs()))));
+        const DWORD wake = MsgWaitForMultipleObjects(n, handles, FALSE, timeout, QS_ALLINPUT);
         if (wake == WAIT_FAILED) {
             SERR("Message wait failed (%lu)", GetLastError());
             StopSession(L"");

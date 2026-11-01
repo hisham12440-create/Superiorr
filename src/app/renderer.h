@@ -43,8 +43,8 @@ public:
     std::optional<double> PollGpuTime();
     void BeginGpuTiming();
     void EndGpuTiming();
-    void RenderMid();
-    void PresentFinal(Src s, const Settings& st);
+    void RenderMid(float phase);
+    void PresentFinal(Src s, const Settings& st, float phase = .5f);
 
 private:
     struct Tex {
@@ -83,6 +83,9 @@ private:
     int frames_ = 0;
     uint32_t frameNo_ = 0;
 
+    ComPtr<ID3D11Texture2D> reverseFlowTex_;
+    ComPtr<ID3D11ShaderResourceView> reverseFlowSrv_;
+    ComPtr<ID3D11UnorderedAccessView> reverseFlowUav_;
     ComPtr<ID3D11Texture2D> flowTex_;
     ComPtr<ID3D11ShaderResourceView> flowSrv_;
     ComPtr<ID3D11UnorderedAccessView> flowUav_;

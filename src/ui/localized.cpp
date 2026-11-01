@@ -1,0 +1,261 @@
+#include "localized.h"
+#include <windows.h>
+#include <wrl/client.h>
+#include <algorithm>
+#include <cstdarg>
+#include <cstdio>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include <stdexcept>
+#include <cstring>
+namespace superior::localized {
+namespace {
+using Microsoft::WRL::ComPtr;
+bool rtl = false;
+ComPtr<ID3D11Device> gpu;
+struct Image { ComPtr<ID3D11ShaderResourceView> view; ImVec2 size; };
+std::unordered_map<std::string, Image> cache;
+size_t cachedBytes=0;
+std::vector<ComPtr<ID3D11ShaderResourceView>> frameReferences;
+const std::unordered_map<std::string, std::string> translations = {
+    {"S U P E R I O R   /   CONTROL CENTER","سوبيريور — مركز التحكم"},
+    {"SAFE MODE: frame generation is disabled","الوضع الآمن: توليد الإطارات معطّل"},
+    {"DirectX 11  |  Capture only  |  Prototype","DirectX 11 | التقاط فقط | نسخة تجريبية"},
+    {"SESSION   %s","الجلسة: %s"},
+    {"Ready","جاهز"},
+    {"Paused - game not foreground","متوقف مؤقتاً — اللعبة ليست في المقدمة"},
+    {"Capturing","جارٍ الالتقاط"},
+    {"Use your Start / stop shortcut on the borderless game, or tray > Start with a 3-second delay. Close this panel to keep Superior in the tray.","استخدم اختصار التشغيل على اللعبة في وضع النافذة بلا حدود، أو اختر ابدأ من قائمة شريط النظام. إغلاق هذه النافذة يُبقي البرنامج في شريط النظام."},
+    {"HARDWARE / EFFICIENCY","العتاد والكفاءة"},
+    {"%s | %s | Tier %s","%s | %s | الفئة %s"},
+    {"Dedicated %.0f MiB | Shared %.0f MiB","ذاكرة مخصصة %.0f MiB | مشتركة %.0f MiB"},
+    {"DXGI process usage %.0f MiB | Budget %.0f MiB | Extra allowance %.0f MiB","استخدام العملية %.0f MiB | الميزانية %.0f MiB | الهامش الإضافي %.0f MiB"},
+    {"VRAM budget: n/a","ميزانية الذاكرة: غير متاحة"},
+    {"Measured GPU group time %.2f ms | Group budget %.2f ms","زمن مجموعة عمل GPU المقاس %.2f ms | ميزانية المجموعة %.2f ms"},
+    {"GPU render time: n/a (waiting for completed timestamp queries)","زمن GPU غير متاح — بانتظار اكتمال استعلامات التوقيت"},
+    {"Temperature / watts / clocks / ghost score: n/a","الحرارة / القدرة / التردد / درجة التشبح: غير متاحة"},
+    {"GAME PROFILES","إعدادات الألعاب"},
+    {"Load / save per-game image settings (next session)","تحميل وحفظ إعدادات كل لعبة — للجلسة القادمة"},
+    {"Game profiles use the full executable path. While active, image edits save to that game; global image defaults are restored when capture stops.","ترتبط الإعدادات بمسار ملف اللعبة الكامل. تُحفظ التعديلات للعبة أثناء الجلسة وتعود الإعدادات العامة عند إيقاف الالتقاط."},
+    {"CUSTOM SHORTCUTS","الاختصارات المخصصة"},
+    {"Choose a key and modifiers. Disabled removes the shortcut. Changes apply only when you press Apply. Windows may reject shortcuts already used by another app.","اختر المفتاح والمعدِّلات. اختر معطّل لإزالة الاختصار. لا تُطبّق التعديلات إلا بعد الضغط على تطبيق. قد يرفض ويندوز اختصاراً يستخدمه برنامج آخر."},
+    {"Start / stop","تشغيل / إيقاف"},
+    {"OLED mode","وضع OLED"},
+    {"Frame generation","توليد الإطارات"},
+    {"OLED intensity up","زيادة شدة OLED"},
+    {"OLED intensity down","خفض شدة OLED"},
+    {"Sharpness up","زيادة الحدة"},
+    {"Sharpness down","خفض الحدة"},
+    {"Tray language","لغة قائمة النظام"},
+    {"Quit","خروج"},
+    {"Anti-aliasing","تنعيم الحواف"},
+    {"Vibrance up","زيادة حيوية الألوان"},
+    {"Vibrance down","خفض حيوية الألوان"},
+    {"Key","المفتاح"},
+    {"Disabled","معطّل"},
+    {"Page Up","صفحة لأعلى"},
+    {"Page Down","صفحة لأسفل"},
+    {"End","النهاية"},
+    {"Home","البداية"},
+    {"Left","يسار"},
+    {"Up","أعلى"},
+    {"Right","يمين"},
+    {"Down","أسفل"},
+    {"F12 is reserved by Windows; at least one modifier is required.","المفتاح F12 محجوز لويندوز. يلزم اختيار معدِّل واحد على الأقل."},
+    {"Apply shortcuts","تطبيق الاختصارات"},
+    {"Edit default shortcuts","تحرير الاختصارات الافتراضية"},
+    {"Discard shortcut edits","إلغاء تعديلات الاختصارات"},
+    {"Shortcuts applied","تم تطبيق الاختصارات"},
+    {"Operating mode","وضع التشغيل"},
+    {"Comfort","الراحة"},
+    {"Balanced","متوازن"},
+    {"Max","الأقصى"},
+    {"Maximum multiplier (Comfort caps x2)","أقصى مضاعف — وضع الراحة محدود بـ x2"},
+    {"Sharpness","الحدة"},
+    {"Contrast","التباين"},
+    {"Saturation","التشبع"},
+    {"Brightness","السطوع"},
+    {"Gamma","غاما"},
+    {"Before / after split (left is original)","مقارنة قبل وبعد — الأصل على اليسار"},
+    {"Apply image preset","تطبيق مظهر جاهز"},
+    {"Choose preset","اختر المظهر"},
+    {"Clean","نقي"},
+    {"Vivid","حيوي"},
+    {"Cinematic","سينمائي"},
+    {"Competitive","تنافسي"},
+    {"OLED emulation","محاكاة OLED"},
+    {"Off","إيقاف"},
+    {"Light","خفيف"},
+    {"Medium","متوسط"},
+    {"Strong","قوي"},
+    {"OLED intensity","شدة OLED"},
+    {"Vibrance","حيوية الألوان"},
+    {"OLED is an emulation; LCD black levels cannot be changed.","وضع OLED محاكاة؛ لا يمكن تحويل سواد شاشة LCD إلى سواد OLED الحقيقي."},
+    {"Frame generation requires a game cap near half your display refresh. GPU quality and latency are not yet validated on hardware.","اختر معدل اللعبة قريباً من تردد الشاشة مقسوماً على المضاعف. الجودة وزمن التأخير لم يتم التحقق منهما على عتاد حقيقي بعد."},
+    {"Reset image settings","إعادة ضبط الصورة"},
+    {"Hide to tray","إخفاء إلى شريط النظام"},
+    {"No game selected","لم تُحدّد لعبة"},
+    {"No active game profile. Global image defaults restored.","لا توجد إعدادات لعبة نشطة. تمت استعادة الإعدادات العامة."},
+    {"Game profile save failed. Check folder permissions.","فشل حفظ إعدادات اللعبة. تحقق من أذونات المجلد."},
+    {"Cannot identify target executable; using global settings","تعذر تحديد ملف اللعبة؛ تُستخدم الإعدادات العامة"},
+    {"Profiles disabled for this session","إعدادات الألعاب معطّلة لهذه الجلسة"},
+    {"Power policy: interpolation disabled","سياسة الطاقة: توليد الإطارات معطّل"},
+    {"VRAM headroom below 32 MiB: interpolation disabled","هامش الذاكرة أقل من 32 MiB: توليد الإطارات معطّل"},
+    {"GPU over budget; waiting for 5 seconds stable headroom","تجاوز GPU الميزانية؛ بانتظار هامش مستقر لمدة خمس ثوانٍ"},
+    {"Optional interpolation allowed (quality unverified)","توليد الإطارات مسموح — الجودة غير متحقق منها"},
+    {"No GPU timing sample yet","لا توجد عينة توقيت GPU بعد"},
+    {"Low","منخفض"},
+    {"High","مرتفع"},
+    {"Loaded game profile: ","تم تحميل إعدادات اللعبة: "},
+    {"New game profile (saved on image edits): ","إعدادات لعبة جديدة — تُحفظ عند التعديل: "},
+    {"Game profile saved: ","تم حفظ إعدادات اللعبة: "},
+    {"Language","اللغة"},
+    {"English","الإنجليزية"},
+    {"Arabic","العربية"},
+    {"Neural SR","رفع الدقة العصبي"},
+    {"Neural live path is unavailable; spatial fallback is active.","المسار العصبي المباشر غير متاح؛ رفع الدقة المكاني نشط."},
+    {"Offline DirectML inference: Superior.exe --neural input.pgm output.pgm model.onnx","للاستدلال العصبي غير المباشر: Superior.exe --neural input.pgm output.pgm model.onnx"},
+    {"Quality verification","التحقق من الجودة"},
+    {"Ground-truth pass rate: n/a (run --verify on a reference corpus)","نسبة النجاح مقابل المرجع: غير متاحة — شغّل أداة التحقق على مجموعة مرجعية"},
+    {"99% is a dataset target, not a runtime guarantee.","نسبة 99% هدف لمجموعة اختبار، وليست ضماناً أثناء اللعب."},
+};
+std::string Translate(const char* text) {
+    const auto it = translations.find(text);
+    if (it != translations.end()) return it->second;
+    // Profile/status messages include a path; preserve it verbatim for bidi layout.
+    const std::string value(text);
+    for (const auto& item : translations)
+        if (!item.first.empty() && item.first.back() == ' ' && value.rfind(item.first, 0) == 0)
+            return item.second + value.substr(item.first.size());
+    return value;
+}
+std::string Format(const char* format, va_list args) {
+    auto translated = rtl ? Translate(format) : std::string(format);
+    va_list copy; va_copy(copy, args);
+    const int count = std::vsnprintf(nullptr, 0, translated.c_str(), copy);
+    va_end(copy);
+    if (count < 0) return translated;
+    std::vector<char> result(static_cast<size_t>(count) + 1);
+    std::vsnprintf(result.data(), result.size(), translated.c_str(), args);
+    const std::string formatted(result.data());
+    return rtl && std::string(format) == "%s" ? Translate(formatted.c_str()) : formatted;
+}
+Image Rasterize(const std::string& text, int width) {
+    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (length <= 0) return {};
+    std::wstring wide(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), wide.data(), length);
+    // GDI's complex-script renderer performs contextual Arabic shaping and bidi;
+    // the text is not reversed or rewritten into presentation-form code points.
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc) return {};
+    HFONT font = CreateFontW(-19,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,ARABIC_CHARSET,
+        OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+    if (!font) { DeleteDC(dc); return {}; }
+    const auto oldFont = SelectObject(dc, font);
+    RECT bounds{0,0,width,0};
+    const UINT flags = DT_RTLREADING | DT_RIGHT | DT_WORDBREAK | DT_NOPREFIX;
+    DrawTextW(dc, wide.c_str(), length, &bounds, flags | DT_CALCRECT);
+    const int w = static_cast<int>(std::clamp(bounds.right,1L,static_cast<LONG>(width))), h = static_cast<int>(std::clamp(bounds.bottom,1L,4096L));
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = w; info.bmiHeader.biHeight = -h;
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* pixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    Image result;
+    if (bitmap && pixels) {
+        const auto oldBitmap = SelectObject(dc, bitmap);
+        std::memset(pixels, 0, static_cast<size_t>(w)*h*4);
+        SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(255,255,255));
+        RECT draw{0,0,w,h};
+        DrawTextW(dc, wide.c_str(), length, &draw, flags);
+        GdiFlush();
+        auto* bytes = static_cast<unsigned char*>(pixels);
+        for (size_t i = 0; i < static_cast<size_t>(w)*h; ++i) {
+            const auto alpha = std::max({bytes[i*4],bytes[i*4+1],bytes[i*4+2]});
+            bytes[i*4] = bytes[i*4+1] = bytes[i*4+2] = 255; bytes[i*4+3] = alpha;
+        }
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = static_cast<UINT>(w); d.Height = static_cast<UINT>(h);
+        d.MipLevels = d.ArraySize = 1; d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        d.SampleDesc.Count = 1; d.Usage = D3D11_USAGE_IMMUTABLE;
+        d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA data{pixels,static_cast<UINT>(w*4),0};
+        ComPtr<ID3D11Texture2D> texture;
+        if (SUCCEEDED(gpu->CreateTexture2D(&d,&data,&texture)) &&
+            SUCCEEDED(gpu->CreateShaderResourceView(texture.Get(),nullptr,&result.view)))
+            result.size = ImVec2(static_cast<float>(w),static_cast<float>(h));
+        SelectObject(dc, oldBitmap);
+        DeleteObject(bitmap);
+    }
+    SelectObject(dc, oldFont); DeleteObject(font); DeleteDC(dc);
+    return result;
+}
+Image Lookup(const std::string& text, int width) {
+    width = std::clamp(width, 32, 2048);
+    const std::string key = std::to_string(width) + text;
+    auto found = cache.find(key);
+    if (found != cache.end()) return found->second;
+    if (cache.size() >= 256 || cachedBytes >= 64*1024*1024) { cache.clear(); cachedBytes=0; }
+    auto image=Rasterize(text,width);
+    cachedBytes+=static_cast<size_t>(image.size.x*image.size.y*4);
+    return cache.emplace(key,std::move(image)).first->second;
+}
+void Paint(const std::string& text, bool reserve, ImU32 color, bool align = true) {
+    if (text.empty()) return;
+    const float available = ImGui::GetContentRegionAvail().x;
+    auto image = Lookup(text, static_cast<int>(available));
+    if (!image.view) { if (reserve) ImGui::TextUnformatted("[Arabic rendering unavailable]"); return; }
+    frameReferences.push_back(image.view);
+    auto pos = ImGui::GetCursorScreenPos();
+    if (align) pos.x += std::max(0.f, available - image.size.x);
+    ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(image.view.Get())), pos,
+        ImVec2(pos.x+image.size.x,pos.y+image.size.y), ImVec2(0,0),ImVec2(1,1),color);
+    if (reserve) ImGui::Dummy(ImVec2(available,image.size.y));
+}
+std::string Id(const char* label) { return "##" + std::string(label); }
+void Label(const char* label) { Paint(Translate(label),true,ImGui::GetColorU32(ImGuiCol_Text)); }
+}
+void BeginFrame(ID3D11Device* device, bool arabic) {
+    gpu = device; rtl = arabic; frameReferences.clear();
+}
+void Shutdown() { cache.clear(); cachedBytes=0; frameReferences.clear(); gpu.Reset(); }
+std::string Value(const char* text) { return rtl ? Translate(text) : std::string(text); }
+#define LOCALIZED_TEXT(Name, Color) \
+void Name(const char* format, ...) { va_list args; va_start(args,format); auto text = Format(format,args); va_end(args); \
+ if (rtl) Paint(text,true,Color); else ImGui::TextUnformatted(text.c_str()); }
+LOCALIZED_TEXT(Text, ImGui::GetColorU32(ImGuiCol_Text))
+void TextDisabled(const char* format, ...) { va_list args; va_start(args,format); auto text=Format(format,args); va_end(args);
+ if(rtl) Paint(text,true,ImGui::GetColorU32(ImGuiCol_TextDisabled)); else { ImGui::BeginDisabled(); ImGui::TextUnformatted(text.c_str()); ImGui::EndDisabled(); } }
+void TextWrapped(const char* format, ...) { va_list args; va_start(args,format); auto text=Format(format,args); va_end(args);
+ if(rtl) Paint(text,true,ImGui::GetColorU32(ImGuiCol_Text)); else { ImGui::PushTextWrapPos(0); ImGui::TextUnformatted(text.c_str()); ImGui::PopTextWrapPos(); } }
+void TextColored(const ImVec4& color,const char* format, ...) { va_list args; va_start(args,format); auto text=Format(format,args); va_end(args);
+ if(rtl) Paint(text,true,ImGui::ColorConvertFloat4ToU32(color)); else { ImGui::PushStyleColor(ImGuiCol_Text,color); ImGui::TextUnformatted(text.c_str()); ImGui::PopStyleColor(); } }
+void SeparatorText(const char* label) { if(!rtl) ImGui::SeparatorText(label); else { ImGui::Separator(); Label(label); } }
+bool Checkbox(const char* label,bool* value) { if(!rtl) return ImGui::Checkbox(label,value); bool changed=ImGui::Checkbox(Id(label).c_str(),value); ImGui::SameLine(); Label(label); return changed; }
+bool CheckboxFlags(const char* label,int* flags,int mask) { return ImGui::CheckboxFlags(label,flags,mask); }
+
+bool Button(const char* label) {
+ if(!rtl) return ImGui::Button(label);
+ auto image=Lookup(Translate(label), static_cast<int>(ImGui::GetContentRegionAvail().x));
+ const auto pos=ImGui::GetCursorScreenPos();
+ const ImVec2 size(std::max(100.f,image.size.x+24),std::max(32.f,image.size.y+12));
+ bool clicked=ImGui::Button(Id(label).c_str(),size);
+ if(image.view) { frameReferences.push_back(image.view); ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(image.view.Get())),ImVec2(pos.x+12,pos.y+6),ImVec2(pos.x+12+image.size.x,pos.y+6+image.size.y)); }
+ return clicked;
+}
+bool SliderFloat(const char* label,float* value,float lo,float hi,const char* format) { if(!rtl) return ImGui::SliderFloat(label,value,lo,hi,format); Label(label); ImGui::SetNextItemWidth(-1); return ImGui::SliderFloat(Id(label).c_str(),value,lo,hi,format); }
+bool SliderInt(const char* label,int* value,int lo,int hi) { if(!rtl) return ImGui::SliderInt(label,value,lo,hi); Label(label); ImGui::SetNextItemWidth(-1); return ImGui::SliderInt(Id(label).c_str(),value,lo,hi); }
+bool CollapsingHeader(const char* label) {
+ if(!rtl) return ImGui::CollapsingHeader(label);
+ const auto pos=ImGui::GetCursorScreenPos(); bool open=ImGui::CollapsingHeader(Id(label).c_str());
+ const auto after=ImGui::GetCursorScreenPos(); ImGui::SetCursorScreenPos(pos);
+ Paint(Translate(label),false,ImGui::GetColorU32(ImGuiCol_Text)); ImGui::SetCursorScreenPos(after); return open;
+}
+bool BeginCombo(const char* label,const char* preview) { if(!rtl) return ImGui::BeginCombo(label,preview); Label(label); if(preview) Label(preview); ImGui::SetNextItemWidth(-1); return ImGui::BeginCombo(Id(label).c_str(),nullptr,ImGuiComboFlags_NoPreview); }
+bool Selectable(const char* label,bool selected) { if(!rtl) return ImGui::Selectable(label,selected); const auto pos=ImGui::GetCursorScreenPos(); auto image=Lookup(Translate(label),static_cast<int>(ImGui::GetContentRegionAvail().x)); bool choice=ImGui::Selectable(Id(label).c_str(),selected,0,ImVec2(0,std::max(24.f,image.size.y))); auto after=ImGui::GetCursorScreenPos(); ImGui::SetCursorScreenPos(pos); Paint(Translate(label),false,ImGui::GetColorU32(ImGuiCol_Text)); ImGui::SetCursorScreenPos(after); return choice; }
+bool Combo(const char* label,int* current,const char* const* items,int count) { if(!rtl) return ImGui::Combo(label,current,items,count); bool changed=false; if(BeginCombo(label,items[*current])) { for(int i=0;i<count;++i) if(Selectable(items[i],i==*current)){ *current=i; changed=true; } ImGui::EndCombo(); } return changed; }
+}

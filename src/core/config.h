@@ -13,6 +13,7 @@ struct Settings {
     float oledIntensity = 1.0f;    // 0..1
     float sharpness = 0.5f;        // 0..1
     bool frameGen = true;
+    int maxMultiplier = 2;        // 2..4; Comfort always caps at 2
     bool antiAlias = true;
     float contrast = 1.0f;       // 0.5..2
     float saturation = 1.0f;     // 0..2

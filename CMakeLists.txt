@@ -13,7 +13,13 @@ FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download
 FetchContent_MakeAvailable(json)
 
 # ---- core: pure C++ logic, testable on CI without a GPU --------------------
-add_library(superior_core STATIC src/core/log.cpp src/core/config.cpp src/core/files.cpp src/core/profiles.cpp src/core/settings_bundle.cpp src/benchmark/quality.cpp src/present/session_stats.cpp)
+add_library(superior_core STATIC src/core/log.cpp src/core/config.cpp src/core/files.cpp src/core/profiles.cpp src/core/settings_bundle.cpp src/core/diagnostics.cpp src/benchmark/quality.cpp src/present/session_stats.cpp)
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  OUTPUT_VARIABLE SUPERIOR_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT SUPERIOR_REVISION MATCHES "^[0-9a-fA-F]+$")
+  set(SUPERIOR_REVISION "unknown")
+endif()
+target_compile_definitions(superior_core PRIVATE SUPERIOR_BUILD_REVISION="${SUPERIOR_REVISION}")
 target_include_directories(superior_core PUBLIC src)
 target_link_libraries(superior_core PUBLIC nlohmann_json::nlohmann_json)
 if(WIN32)
@@ -44,7 +50,7 @@ if(WIN32)
   FetchContent_MakeAvailable(ort_c_api)
   FetchContent_Declare(imgui URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.8.zip)
   FetchContent_MakeAvailable(imgui)
-  add_library(superior_ui STATIC src/ui/panel.cpp src/ui/filter_pages.cpp src/ui/setup_page.cpp src/ui/comparison_page.cpp src/ui/localized.cpp
+  add_library(superior_ui STATIC src/ui/panel.cpp src/ui/filter_pages.cpp src/ui/setup_page.cpp src/ui/comparison_page.cpp src/ui/diagnostics_page.cpp src/ui/localized.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp

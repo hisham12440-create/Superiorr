@@ -11,7 +11,7 @@ struct Snapshot {
     std::string reason = "No GPU timing sample yet";
     Tier tier = Tier::Low;
     uint64_t dedicated = 0, shared = 0, usage = 0, budget = 0, available = 0;
-    bool memoryKnown = false, powerKnown = false, battery = false, saver = false;
+    bool memoryKnown = false, powerKnown = false, acKnown = false, battery = false, saver = false;
     bool timingKnown = false;
     double gpuMs = 0, targetMs = 0;
     bool allowGeneration = true;

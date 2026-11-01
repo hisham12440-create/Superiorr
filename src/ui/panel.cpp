@@ -150,8 +150,8 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(rtl ? 1 : 0);
         ImGui::BeginChild("Navigation", ImVec2(0, bodyHeight), ImGuiChildFlags_Borders);
-        const char* pages[] = {"Overview", "Image filters", "OLED display", "Quality tools", "Preferences", "Setup guide"};
-        for (int i=0; i<6; ++i) {
+        const char* pages[] = {"Overview", "Image filters", "OLED display", "Quality tools", "Preferences", "Setup guide", "Diagnostics"};
+        for (int i=0; i<7; ++i) {
             ImGui::PushID(i);
             if (localized::Selectable(pages[i], page_==i)) page_=i;
             ImGui::PopID();
@@ -194,6 +194,8 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
                 localized::TextWrapped("Offline DirectML inference: Superior.exe --neural input.pgm output.pgm model.onnx");
             }
             DrawVerification(running);
+        } else if (page_ == 6) {
+            DrawDiagnostics(running, paused, hw, safeMode);
         } else if (page_ == 5) {
             DrawSetup(hw, safeMode);
         } else {

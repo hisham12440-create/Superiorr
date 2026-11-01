@@ -1003,3 +1003,73 @@ TEST(Comparison, DividerGuideUsesExactlyOneOutputPixelAndHidesAtEndpoints) {
     s.previewPosition=0; EXPECT_FALSE(PreviewGuideAt(s,100,0,1920,1080));
     s.previewPosition=.5f; s.previewLine=false; EXPECT_FALSE(PreviewGuideAt(s,100,540,1920,1080));
 }
+
+#include "core/diagnostics.h"
+TEST(Diagnostics, UnknownMeasurementsAreNullNotZeroOrFakeClaims) {
+    const auto report=nlohmann::json::parse(DiagnosticsJson({}));
+    EXPECT_EQ(report.at("format"),"superior-diagnostics"); EXPECT_EQ(report.at("schema"),1);
+    EXPECT_TRUE(report["gpu"]["device_removed_reason_hresult"].is_null());
+    EXPECT_TRUE(report["gpu"]["feature_level"].is_null());
+    EXPECT_TRUE(report["gpu"]["local_budget_bytes"].is_null());
+    EXPECT_TRUE(report["gpu"]["last_completed_group_ms"].is_null());
+    EXPECT_TRUE(report["gpu"]["temperature_c"].is_null()); EXPECT_TRUE(report["gpu"]["watts"].is_null());
+    EXPECT_TRUE(report["gpu"]["whole_frame_gpu_ms"].is_null()); EXPECT_TRUE(report["power"]["on_battery"].is_null());
+    EXPECT_TRUE(report["runtime"]["wgc_supported_probe"].is_null());
+    EXPECT_TRUE(report["settings_bundle"].is_null()); EXPECT_TRUE(report["session"].is_null());
+    EXPECT_EQ(report["session_status"],"not_requested"); EXPECT_FALSE(report["build_revision"].get<std::string>().empty());
+}
+TEST(Diagnostics, FalseAndZeroRemainKnownValues) {
+    DiagnosticsSnapshot snapshot;
+    snapshot.captureSupported=false; snapshot.onBattery=false; snapshot.batterySaver=false;
+    snapshot.deviceRemovedReason=0; snapshot.gpuGroupMs=0; snapshot.budgetBytes=0; snapshot.usageBytes=0;
+    snapshot.featureLevel=0xb000; snapshot.running=true; snapshot.captureActive=true;
+    const auto report=nlohmann::json::parse(DiagnosticsJson(snapshot));
+    EXPECT_EQ(report["runtime"]["wgc_supported_probe"],false); EXPECT_EQ(report["gpu"]["device_removed_reason_hresult"],0);
+    EXPECT_EQ(report["gpu"]["local_budget_bytes"],0); EXPECT_EQ(report["gpu"]["last_completed_group_ms"],0);
+    EXPECT_EQ(report["power"]["on_battery"],false); EXPECT_EQ(report["gpu"]["feature_level"],0xb000);
+}
+TEST(Diagnostics, NonfiniteOrNegativeTimingIsOmitted) {
+    for(double value : {std::numeric_limits<double>::quiet_NaN(),std::numeric_limits<double>::infinity(),-1.}) {
+        DiagnosticsSnapshot snapshot; snapshot.gpuGroupMs=value;
+        const auto report=nlohmann::json::parse(DiagnosticsJson(snapshot));
+        EXPECT_TRUE(report["gpu"]["last_completed_group_ms"].is_null());
+    }
+}
+TEST(Diagnostics, OptionalSettingsArePortableAndDoNotExposeLocalBindings) {
+    DiagnosticsSnapshot snapshot; snapshot.settings.language="ar"; snapshot.settings.colorLook=3;
+    const auto report=nlohmann::json::parse(DiagnosticsJson(snapshot,{true,false}));
+    const auto& settings=report["settings_bundle"]["settings"];
+    EXPECT_EQ(settings["color_look"],3); EXPECT_FALSE(settings.contains("hotkeys"));
+    EXPECT_FALSE(settings.contains("language")); EXPECT_FALSE(settings.contains("preview_position"));
+    EXPECT_FALSE(report["privacy"]["uploaded_automatically"].get<bool>());
+    EXPECT_FALSE(report["privacy"]["contains_game_paths"].get<bool>());
+    EXPECT_FALSE(report["privacy"]["contains_images"].get<bool>());
+    EXPECT_FALSE(report["privacy"]["contains_logs"].get<bool>());
+}
+TEST(Diagnostics, SessionOptInRejectsInvalidSnapshotWithoutLosingReport) {
+    DiagnosticsSnapshot snapshot;
+    auto report=nlohmann::json::parse(DiagnosticsJson(snapshot,{false,true}));
+    EXPECT_EQ(report["session_status"],"unavailable"); EXPECT_TRUE(report["session"].is_null());
+    present::SessionStats stats; stats.Start(0,16); snapshot.session=stats.Snapshot(10);
+    report=nlohmann::json::parse(DiagnosticsJson(snapshot,{false,true}));
+    EXPECT_EQ(report["session_status"],"included"); EXPECT_TRUE(report["session"]["scanout_fps"].is_null());
+    ++snapshot.session.real.scheduled;
+    report=nlohmann::json::parse(DiagnosticsJson(snapshot,{false,true}));
+    EXPECT_EQ(report["session_status"],"invalid_snapshot_omitted"); EXPECT_TRUE(report["session"].is_null());
+}
+TEST(Diagnostics, RemovedDeviceReasonAndFailureStageArePreserved) {
+    DiagnosticsSnapshot snapshot; snapshot.deviceRemovedReason=-2005270523; snapshot.lastFailure=FailureStage::Runtime;
+    const auto report=nlohmann::json::parse(DiagnosticsJson(snapshot));
+    EXPECT_EQ(report["gpu"]["device_removed_reason_hresult"],-2005270523);
+    EXPECT_EQ(report["runtime"]["last_failure_stage"],"runtime");
+    EXPECT_STREQ(FailureStageName(FailureStage::StartCapture),"capture_start");
+    EXPECT_STREQ(FailureStageName(FailureStage::UserInterface),"ui");
+}
+TEST_F(StorageTest, DiagnosticReportSaveIsReadableAndFailuresAreReported) {
+    DiagnosticsSnapshot snapshot; snapshot.adapter="Synthetic test adapter";
+    const auto path=directory/"diagnostics.json";
+    ASSERT_TRUE(SaveDiagnosticsReport(path,snapshot));
+    std::string text; ASSERT_TRUE(ReadText(path,text));
+    EXPECT_EQ(nlohmann::json::parse(text)["gpu"]["adapter"],"Synthetic test adapter");
+    EXPECT_FALSE(SaveDiagnosticsReport(directory/"missing"/"diagnostics.json",snapshot));
+}

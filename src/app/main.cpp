@@ -262,6 +262,7 @@ void StartSession(HWND target) {
         SLOG("Session started: display %ux%u @ %.0f Hz", w, h, g.displayHz);
         UpdateTip();
     } catch (const std::exception& e) {
+        g.panel.SetFailureStage(FailureStage::StartCapture);
         SERR("StartSession: %s", e.what());
         const std::string msg = e.what();
         StopSession(L"");
@@ -576,6 +577,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         Notify(L"Superior", L"Shortcuts unavailable. Use the tray menu and edit shortcuts in Control Center.");
     } else Notify(L"Superior", T(L"Ready. Use your Start / stop shortcut on the game window.", L"جاهز. استخدم اختصار التشغيل على نافذة اللعبة."));
 
+    const auto captureSupported=Capture::Supported();
     bool quit = false;
     while (!quit) {
         HANDLE handles[2] = {g.frameEvent.Get(), g.gfx.Waitable()};
@@ -604,6 +606,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             try {
                 if (auto time = g.gfx.PollGpuTime()) g.monitor.RecordGpuTime(*time);
                 g.monitor.Poll(NowMs(), static_cast<hardware::Mode>(g.st.comfortMode), g.displayIntervalMs);
+                g.panel.SetCaptureDiagnostics(captureSupported,g.cap.Active());
                 g.panel.SetSessionSnapshot(g.session.Snapshot(NowMs()));
                 g.panel.Draw(g.running, g.paused, g.monitor.Data(), g.safeMode);
                 if (g.exitAfterDialog && !g.panel.ToolDialogOpen()) {
@@ -611,6 +614,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
                     PostMessageW(g.main, WM_CLOSE, 0, 0);
                 }
             } catch (const std::exception& e) {
+                g.panel.SetFailureStage(FailureStage::UserInterface);
                 SERR("UI error: %s", e.what());
                 g.panel.Close();
             }
@@ -619,6 +623,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             try {
                 Tick(ready);
             } catch (const std::exception& e) {
+                g.panel.SetFailureStage(FailureStage::Runtime);
                 SERR("Runtime error: %s", e.what());
                 const std::string msgText = e.what();
                 StopSession(L"");

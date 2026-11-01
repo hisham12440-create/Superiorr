@@ -10,6 +10,7 @@
 #include <filesystem>
 #include "core/config.h"
 #include "core/image_comparison.h"
+#include "core/diagnostics.h"
 #include "hardware/monitor.h"
 #include "present/session_stats.h"
 namespace superior {
@@ -18,6 +19,8 @@ class Panel {
 public:
     void Open(HINSTANCE instance, ID3D11Device* device, Settings* settings,
               std::function<void()> save, ApplyHotkeys applyHotkeys);
+    void SetCaptureDiagnostics(std::optional<bool> supported,bool active) { captureSupported_=supported; captureActive_=active; }
+    void SetFailureStage(FailureStage stage) { lastFailure_=stage; }
     void SetSessionSnapshot(const present::SessionSnapshot& snapshot) { session_ = snapshot; }
     void SetProfileStatus(const std::string& text) { profileStatus_ = text; }
     bool OfflineBusy() const { return verification_.valid() || toolDialogOpen_; }
@@ -33,6 +36,13 @@ private:
         std::atomic<bool> cancel{false};
         std::atomic<size_t> completed{0}, total{0};
     };
+    void DrawDiagnostics(bool running,bool paused,const hardware::Snapshot& hardware,bool safeMode);
+    void ExportDiagnostics(const DiagnosticsSnapshot& snapshot,DiagnosticOptions options);
+    std::optional<bool> captureSupported_;
+    bool captureActive_=false;
+    FailureStage lastFailure_=FailureStage::None;
+    DiagnosticOptions diagnosticOptions_;
+    std::string diagnosticsStatus_;
     void DrawSetup(const hardware::Snapshot& hardware, bool safeMode);
     void DrawSettingsTransfer(bool running);
     void ChooseSettingsBundle(bool importing);

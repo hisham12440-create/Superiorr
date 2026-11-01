@@ -415,3 +415,31 @@ No new GPU textures, readbacks or render passes are added for comparison control
 CPU tests cover side selection, endpoints, settings bounds, A/B isolation and local
 preference preservation. Hardware image output, guide thickness at different DPI,
 Arabic layout and generated/real temporal differences still need manual validation.
+
+### Expansion 4: privacy-scoped diagnostics
+
+The bilingual **Diagnostics** page shows build revision, adapter identity, actual
+`GetDeviceRemovedReason` HRESULT, startup WGC API support probe and capture-session
+state. S_OK is not a stability certificate; WGC support is not game/anti-cheat
+compatibility. An API-probe failure is unknown, not unsupported. Reports retain the
+last observed failure *stage* (capture start/runtime/UI), not raw exception text.
+No automatic device-loss recovery is introduced by this page.
+
+Preview/copy JSON or save an atomic local report using the native save picker.
+Adapter identity is included. Portable settings and API session observations are
+**opt-in**; game paths, hotkeys, screenshots, logs and machine/user names are not
+collected by this report. The application does not upload it. Copying puts its
+contents on the Windows clipboard; review the preview before sharing.
+
+Known DXGI budget/usage and the last completed GPU group time are included. Missing
+power/memory/timing data is `null` rather than fabricated zero; unknown AC-line state
+is not exported as a known battery result. Driver version, total frame GPU time,
+watts and temperature remain unavailable. The group time may be a historical last
+sample, not a current whole-frame measurement. Optional invalid session snapshots
+are omitted with an explicit status instead of being reported as valid.
+
+The native save dialog freezes the requested snapshot, supports cancellation and
+uses existing deferred shutdown/tool exclusion. CPU tests cover report schema,
+unknown versus false/zero, optional contents, failed timing/session values and file
+I/O. Windows driver behavior, clipboard, Arabic/DPI layout, device-removal scenarios
+and shutdown during the save dialog require manual testing.

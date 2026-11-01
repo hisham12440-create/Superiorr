@@ -34,6 +34,10 @@ struct Capture::Impl {
 Capture::Capture() : p_(new Impl) {}
 Capture::~Capture() { Stop(); }
 
+std::optional<bool> Capture::Supported() {
+    try { return wgc::GraphicsCaptureSession::IsSupported(); }
+    catch(const winrt::hresult_error&) { return std::nullopt; }
+}
 bool Capture::Active() const { return p_->active; }
 bool Capture::Closed() const { return p_->closed.load(); }
 

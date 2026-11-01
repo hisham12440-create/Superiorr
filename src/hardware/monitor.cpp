@@ -28,6 +28,7 @@ void Monitor::Poll(double nowMs, Mode requested, double displayInterval) {
         nextPoll_ = nowMs + 1000;
         SYSTEM_POWER_STATUS power{};
         snapshot_.powerKnown = GetSystemPowerStatus(&power) != FALSE;
+        snapshot_.acKnown = snapshot_.powerKnown && (power.ACLineStatus == 0 || power.ACLineStatus == 1);
         snapshot_.battery = snapshot_.powerKnown && power.ACLineStatus == 0;
         snapshot_.saver = snapshot_.powerKnown && power.SystemStatusFlag == 1;
         DXGI_QUERY_VIDEO_MEMORY_INFO info{};

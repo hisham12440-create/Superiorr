@@ -41,3 +41,59 @@ Settings are saved in `settings.json` next to the exe; the log is `superior.log`
 
 ## Build
 GitHub Actions builds on every push: open **Actions > latest run > Artifacts > Superior** and download `Superior.exe`.
+
+## Control Center (foundation update)
+
+Superior now opens a Dear ImGui control panel with a blue/black theme. Adjust
+anti-aliasing, sharpening, vibrance, frame generation and OLED emulation live.
+Close the window or choose **Hide to tray** to keep the process running; reopen
+it with **Superior Control Center** in the tray menu. Use the tray **Exit** or
+Ctrl+Alt+Q to quit. The overlay hides while the target is minimized or not the
+foreground window. The panel itself pauses capture display while focused.
+
+### Architecture and data flow
+
+```text
+Windows.Graphics.Capture -> GPU source textures -> flow / midpoint
+  -> AA -> spatial upscale -> sharpen / colour / OLED -> waitable presentation
+core/ : JSON settings, rotating log, pacing and monotonic timing
+app/  : WinRT capture, DirectX renderer, tray / session orchestration
+ui/   : Dear ImGui Win32 + DX11 Control Center
+```
+
+Builds use GitHub Actions only: push the working branch, open its **build** run,
+wait for all checks, and download the **Superior** artifact. The zip contains
+the portable executable and README. No local compilation is required. The
+Windows app uses C++20 for C++/WinRT; portable core logic uses C++17. Static CRT
+is enabled. Shader sources are embedded but still compiled at startup.
+
+### Current scope and remaining foundation work
+
+This is a prototype foundation update, **not completion of the 13-stage plan**.
+No GPU performance, startup-time, quality or anti-cheat compatibility guarantee
+has been measured. Capture-only means no injection or hooks, not certification
+by anti-cheat vendors. Flow statistics still perform synchronous CPU readback;
+zero-readback flow needs a later GPU-side redesign.
+
+The Control Center currently uses English. The existing Arabic tray strings
+remain available via Ctrl+Alt+L, but **full Arabic UI, bidi/contextual shaping
+and font embedding are not implemented**. Hotkeys are still fixed, not user
+customizable. Monitor/DPI changes during capture require stopping and restarting.
+Exclusive fullscreen is not reliably distinguished from blocked/no-frame capture;
+the no-frame warning recommends borderless/windowed mode. The complete module
+split, robust device-loss recovery, hardware selection and comfort governor are
+not implemented. No neural models or vendor runtimes ship with this build.
+Settings are saved beside the executable; use a writable folder. Settings writes
+now use a temporary file plus atomic replacement; write failures are reported.
+
+### Manual Windows test checklist
+
+- Start from a writable folder, confirm blue/black panel and tray icon.
+- Change settings, exit, restart and confirm persistence.
+- Start capture on a borderless game with Ctrl+Alt+S; stop and repeat 20 times.
+- Verify live sliders, AA toggle and OLED modes; check for blank/frozen output.
+- Alt-Tab and minimize the game: overlay must disappear, resume on return.
+- Resize the game, then close it; report artifacts or capture failure.
+- Try 30 FPS on 60 Hz and 60 FPS on 120 Hz; report pacing and ghosting honestly.
+- Repeat on Intel/AMD/NVIDIA hardware and hybrid laptops where available.
+- Check `superior.log` after failures. Arabic-path logging remains a known gap.

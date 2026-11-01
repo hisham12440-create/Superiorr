@@ -103,3 +103,33 @@ TEST(Oled, LevelZeroIsIdentityAndDarksGetDarker) {
     EXPECT_FLOAT_EQ(OledCurve(0.3f, 0, 1.0f), 0.3f);
     EXPECT_LT(OledCurve(0.05f, 3, 1.0f), 0.05f);
 }
+
+#include "core/timing.h"
+
+TEST(Timing, MonotonicAndResettable) {
+    SteadyTimer timer;
+    const double first = timer.ElapsedMs();
+    EXPECT_GE(first, 0.0);
+    EXPECT_GE(timer.ElapsedMs(), first);
+    timer.Reset();
+    EXPECT_GE(timer.ElapsedMs(), 0.0);
+}
+
+TEST(Config, WrongTypesLeaveExistingSettingsUntouched) {
+    Settings settings;
+    settings.sharpness = 0.7f;
+    EXPECT_FALSE(FromJson(R"({"language":"ar","sharpness":"wrong"})", settings));
+    EXPECT_EQ(settings.language, "en");
+    EXPECT_FLOAT_EQ(settings.sharpness, 0.7f);
+}
+
+TEST(Pacing, ResetRemovesPreviousSessionHistory) {
+    IntervalEma ema;
+    for (int i = 0; i < 20; ++i) ema.Add(33.3);
+    ema.Reset();
+    EXPECT_EQ(ema.Count(), 0);
+    EXPECT_DOUBLE_EQ(ema.Value(), 0);
+    ema.Add(-1);
+    ema.Add(0);
+    EXPECT_EQ(ema.Count(), 0);
+}

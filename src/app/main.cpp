@@ -13,6 +13,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "core/pacing.h"
+#include "ui/panel.h"
 
 using namespace superior;
 
@@ -20,7 +21,7 @@ namespace {
 
 constexpr UINT WM_TRAY = WM_APP + 1;
 constexpr UINT_PTR kStartTimer = 1;
-enum Cmd { CMD_START = 101, CMD_FG, CMD_AA, CMD_OLED, CMD_LANG, CMD_EXIT };
+enum Cmd { CMD_PANEL = 100, CMD_START = 101, CMD_FG, CMD_AA, CMD_OLED, CMD_LANG, CMD_EXIT };
 enum Hot { HK_START = 1, HK_OLED, HK_FG, HK_OLED_UP, HK_OLED_DOWN, HK_SHARP_UP, HK_SHARP_DOWN, HK_LANG, HK_QUIT, HK_AA, HK_VIB_UP, HK_VIB_DOWN };
 
 struct App {
@@ -33,6 +34,8 @@ struct App {
     Settings st;
     Renderer gfx;
     Capture cap;
+    Panel panel;
+    bool paused = false;
     HANDLE frameEvent = nullptr;
     NOTIFYICONDATAW nid{};
 
@@ -104,7 +107,8 @@ void UpdateTip() {
 
 void SaveAndRefresh() {
     g.st.Clamp();
-    SaveSettings(g.settingsPath, g.st);
+    if (!SaveSettings(g.settingsPath, g.st))
+        Notify(L"Superior", L"Settings could not be saved. Check folder permissions.");
     UpdateTip();
 }
 
@@ -172,6 +176,7 @@ void StartSession(HWND target) {
         }
         g.target = target;
         g.running = true;
+        g.paused = false;
         g.queue.clear();
         g.ema.Reset();
         g.lastFrameMs = 0.0;
@@ -205,7 +210,8 @@ void OnFrame(ID3D11Texture2D* tex, UINT w, UINT h) {
     if (canGen) {
         const FlowStats fs = g.gfx.ComputeFlow();
         if (IsStaticFrame(fs.staticBlocks, fs.totalBlocks)) {
-            return;  // duplicate frame: skip all work, the last image stays on screen
+            g.queue.push_back(Src::Cur);
+            return;  // Preserve localized changes; skip interpolation only.
         }
         if (!IsSceneCut(fs.badBlocks, fs.totalBlocks)) {
             g.gfx.RenderMid();
@@ -216,10 +222,20 @@ void OnFrame(ID3D11Texture2D* tex, UINT w, UINT h) {
     g.queue.push_back(Src::Cur);
 }
 
-void Tick() {
-    g.cap.Poll(OnFrame);
+void Tick(bool ready) {
+    const bool paused = IsIconic(g.target) || GetForegroundWindow() != g.target;
+    if (paused != g.paused) {
+        g.paused = paused;
+        ShowWindow(g.overlay, paused ? SW_HIDE : SW_SHOWNOACTIVATE);
+        g.queue.clear();
+        g.ema.Reset();
+        g.lastFrameMs = 0;
+    }
+    g.cap.Poll([&](ID3D11Texture2D* tex, UINT w, UINT h) {
+        if (!g.paused) OnFrame(tex, w, h);
+    });
 
-    if (!g.queue.empty() && g.gfx.Waitable() && WaitForSingleObject(g.gfx.Waitable(), 0) == WAIT_OBJECT_0) {
+    if (!g.queue.empty() && g.gfx.Waitable() && (ready || WaitForSingleObject(g.gfx.Waitable(), 0) == WAIT_OBJECT_0)) {
         const Src s = g.queue.front();
         g.queue.pop_front();
         g.gfx.PresentFinal(s, g.st);
@@ -239,6 +255,7 @@ void Tick() {
 
 void ShowMenu() {
     HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, CMD_PANEL, L"Superior Control Center");
     AppendMenuW(m, MF_STRING, CMD_START,
                 g.running ? T(L"Stop", L"إيقاف") : T(L"Start (3s - click the game now)", L"ابدأ (3 ثوانٍ - اضغط على اللعبة)"));
     AppendMenuW(m, MF_STRING | (g.st.frameGen ? MF_CHECKED : 0), CMD_FG, T(L"Frame generation x2", L"توليد الفريمات x2"));
@@ -273,6 +290,7 @@ void CycleOled() {
 
 void Command(int id) {
     switch (id) {
+        case CMD_PANEL: g.panel.Show(); break;
         case CMD_START: ToggleStart(true); break;
         case CMD_FG: g.st.frameGen = !g.st.frameGen; SaveAndRefresh(); break;
         case CMD_AA: g.st.antiAlias = !g.st.antiAlias; SaveAndRefresh(); break;
@@ -352,10 +370,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     try {
         winrt::init_apartment();
         g.gfx.InitDevice();
+        g.panel.Open(inst, g.gfx.Device(), &g.st, SaveAndRefresh);
     } catch (const std::exception& e) {
         SERR("Init failed: %s", e.what());
         const std::string msg = std::string("Superior could not start:\n") + e.what() + "\n\nSee superior.log";
         MessageBoxA(nullptr, msg.c_str(), "Superior", MB_ICONERROR);
+        g.panel.Close();
         return 1;
     }
 
@@ -398,7 +418,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         HANDLE handles[2] = {g.frameEvent, g.gfx.Waitable()};
         DWORD n = 1;
         if (g.running && !g.queue.empty() && handles[1]) n = 2;
-        MsgWaitForMultipleObjects(n, handles, FALSE, g.running ? 100 : INFINITE, QS_ALLINPUT);
+        const DWORD wake = MsgWaitForMultipleObjects(n, handles, FALSE, g.panel.Visible() ? 16 : g.running ? 100 : INFINITE, QS_ALLINPUT);
+        const bool ready = n == 2 && wake == WAIT_OBJECT_0 + 1;
 
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -409,9 +430,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        if (!quit) {
+            try {
+                g.panel.Draw(g.running, g.paused);
+            } catch (const std::exception& e) {
+                SERR("UI error: %s", e.what());
+                g.panel.Close();
+            }
+        }
         if (g.running) {
             try {
-                Tick();
+                Tick(ready);
             } catch (const std::exception& e) {
                 SERR("Runtime error: %s", e.what());
                 const std::string msgText = e.what();
@@ -422,6 +451,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         }
     }
 
+    g.panel.Close();
     for (const auto& k : keys) UnregisterHotKey(g.main, k.id);
     SaveSettings(g.settingsPath, g.st);
     SLOG("Superior exit");

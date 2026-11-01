@@ -16,6 +16,9 @@ FetchContent_MakeAvailable(json)
 add_library(superior_core STATIC src/core/log.cpp src/core/config.cpp)
 target_include_directories(superior_core PUBLIC src)
 target_link_libraries(superior_core PUBLIC nlohmann_json::nlohmann_json)
+if(WIN32)
+  target_compile_definitions(superior_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 if(MSVC)
   target_compile_options(superior_core PRIVATE /W4 /utf-8)
 endif()
@@ -31,6 +34,16 @@ add_test(NAME core COMMAND superior_tests)
 
 # ---- the application (Windows only) -----------------------------------------
 if(WIN32)
+  FetchContent_Declare(imgui URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.8.zip)
+  FetchContent_MakeAvailable(imgui)
+  add_library(superior_ui STATIC src/ui/panel.cpp
+    ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
+  target_include_directories(superior_ui PUBLIC src PRIVATE ${imgui_SOURCE_DIR})
+  target_compile_definitions(superior_ui PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_link_libraries(superior_ui PRIVATE d3d11 dxgi d3dcompiler dwmapi)
   # Embed the HLSL files in the exe so Superior.exe is a single file.
   set(GEN_DIR ${CMAKE_BINARY_DIR}/gen)
   file(READ ${CMAKE_SOURCE_DIR}/shaders/flow.hlsl FLOW_SRC)
@@ -46,5 +59,5 @@ if(WIN32)
   target_compile_definitions(Superior PRIVATE _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
                                               WINVER=0x0A00 _WIN32_WINNT=0x0A00 UNICODE _UNICODE)
   target_compile_options(Superior PRIVATE /W4 /utf-8 /permissive- /EHsc)
-  target_link_libraries(Superior PRIVATE superior_core d3d11 dxgi d3dcompiler windowsapp shell32 user32)
+  target_link_libraries(Superior PRIVATE superior_core superior_ui d3d11 dxgi d3dcompiler windowsapp shell32 user32)
 endif()

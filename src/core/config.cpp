@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <fstream>
+#include <filesystem>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -48,7 +52,7 @@ bool FromJson(const std::string& text, Settings& out) {
 }
 
 bool LoadSettings(const std::string& path, Settings& out) {
-    std::ifstream f(path);
+    std::ifstream f(std::filesystem::u8path(path));
     if (!f) return false;
     std::stringstream ss;
     ss << f.rdbuf();
@@ -56,10 +60,27 @@ bool LoadSettings(const std::string& path, Settings& out) {
 }
 
 bool SaveSettings(const std::string& path, const Settings& s) {
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) return false;
-    f << ToJson(s);
-    return static_cast<bool>(f);
+    try {
+        const auto destination = std::filesystem::u8path(path);
+        auto temporary = destination;
+        temporary += ".tmp";
+        std::ofstream f(temporary, std::ios::trunc);
+        if (!f) return false;
+        f << ToJson(s);
+        f.flush();
+        const bool written = static_cast<bool>(f);
+        f.close();
+        if (!written || f.fail()) return false;
+#ifdef _WIN32
+        if (!MoveFileExW(temporary.c_str(), destination.c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return false;
+#else
+        std::filesystem::rename(temporary, destination);
+#endif
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 }  // namespace superior

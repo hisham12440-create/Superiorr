@@ -170,8 +170,9 @@ void Renderer::CreateOutput(HWND hwnd, UINT w, UINT h) {
 void Renderer::DestroyOutput() {
     if (ctx_) ctx_->ClearState();
     bbRtv_.Reset();
-    sc_.Reset();
+    if (waitable_) CloseHandle(waitable_);
     waitable_ = nullptr;
+    sc_.Reset();
     prev_ = Tex{};
     cur_ = Tex{};
     mid_ = Tex{};

@@ -5,6 +5,15 @@
 #include <sstream>
 namespace superior {
 void CopyGameSettings(Settings& d, const Settings& s) {
+    d.sharpnessEnabled = s.sharpnessEnabled;
+    d.contrastEnabled = s.contrastEnabled;
+    d.saturationEnabled = s.saturationEnabled;
+    d.brightnessEnabled = s.brightnessEnabled;
+    d.gammaEnabled = s.gammaEnabled;
+    d.vibranceEnabled = s.vibranceEnabled;
+    d.temperatureEnabled = s.temperatureEnabled;
+    d.aaStrength = s.aaStrength;
+    d.temperature = s.temperature;
     d.maxMultiplier = s.maxMultiplier;
     d.comfortMode = s.comfortMode; d.frameGen = s.frameGen; d.antiAlias = s.antiAlias;
     d.sharpness = s.sharpness; d.vibrance = s.vibrance; d.oledLevel = s.oledLevel;

@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "core/log.h"
+#include "filters/parameters.h"
 #include "shaders_gen.h"
 
 namespace superior {
@@ -31,8 +32,9 @@ struct RenderCb {
     float sharp, oledLevel, oledIntensity, vibrance;
     float contrast, saturation, brightness, gamma;
     float splitPreview, phase, pad1, pad2;
+    float temperature, aaStrength, pad3, pad4;
 };
-static_assert(sizeof(RenderCb) == 80, "constant buffer layout");
+static_assert(sizeof(RenderCb) == 96, "constant buffer layout");
 
 struct FlowCb {
     float srcW, srcH, pad0, pad1;
@@ -379,19 +381,22 @@ PresentResult Renderer::PresentFinal(Src s, const Settings& st, float phase) {
     cb.offY = (outH_ - srcH_ * scale) * 0.5f;
     cb.scale = scale;
     cb.frame = static_cast<float>(frameNo_++ % 1024);
-    cb.sharp = st.sharpness;
+    const auto parameters = filters::Effective(st);
+    cb.sharp = parameters.sharpness;
     cb.oledLevel = static_cast<float>(st.oledLevel);
     cb.oledIntensity = st.oledIntensity;
-    cb.vibrance = st.vibrance;
-    cb.contrast = st.contrast;
-    cb.saturation = st.saturation;
-    cb.brightness = st.brightness;
-    cb.gamma = st.gamma;
+    cb.vibrance = parameters.vibrance;
+    cb.contrast = parameters.contrast;
+    cb.saturation = parameters.saturation;
+    cb.brightness = parameters.brightness;
+    cb.gamma = parameters.gamma;
+    cb.temperature = parameters.temperature;
+    cb.aaStrength = parameters.aaStrength;
     cb.splitPreview = st.splitPreview ? 1.0f : 0.0f;
     UpdateCb(cbRender_.Get(), &cb, sizeof cb);
 
     ID3D11ShaderResourceView* src = (s == Src::Mid) ? mid_.srv.Get() : cur_.srv.Get();
-    if (st.antiAlias) {
+    if (parameters.aaStrength > 0) {
         Draw(aa_.rtv.Get(), srcW_, srcH_, psAA_.Get(), src);
         src = aa_.srv.Get();
     }

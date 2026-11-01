@@ -32,6 +32,10 @@ private:
         std::atomic<bool> cancel{false};
         std::atomic<size_t> completed{0}, total{0};
     };
+    bool DrawFilters();
+    bool DrawOled();
+    int page_ = 0;
+    int lastOledLevel_ = 2;
     void DrawSession();
     void ExportSession();
     present::SessionSnapshot session_;

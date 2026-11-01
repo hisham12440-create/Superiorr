@@ -19,6 +19,27 @@ std::unordered_map<std::string, Image> cache;
 size_t cachedBytes=0;
 std::vector<ComPtr<ID3D11ShaderResourceView>> frameReferences;
 const std::unordered_map<std::string, std::string> translations = {
+    {"Overview","نظرة عامة"},
+    {"Image filters","فلاتر الصورة"},
+    {"OLED display","شاشة OLED"},
+    {"Quality tools","أدوات الجودة"},
+    {"Preferences","التفضيلات"},
+    {"Eight independent filters. Bypass keeps your saved slider values.","ثمانية فلاتر مستقلة. التعطيل يحتفظ بقيم التعديل المحفوظة."},
+    {"Image presets leave OLED and anti-aliasing preferences unchanged.","الإعدادات الجاهزة لا تغيّر تفضيلات OLED وتنعيم الحواف."},
+    {"Enabled","مفعّل"},
+    {"Amount","الشدة"},
+    {"Color temperature","حرارة الألوان"},
+    {"Cool (-1) / neutral (0) / warm (+1)","بارد (-1) / محايد (0) / دافئ (+1)"},
+    {"Temperature is an artistic RGB adjustment, not calibrated Kelvin or HDR conversion.","حرارة الألوان تعديل فني لقنوات الألوان، وليست معايرة كلفن أو تحويل HDR."},
+    {"Reset filters only","إعادة ضبط الفلاتر فقط"},
+    {"Three OLED emulation levels, independent of the image presets.","ثلاثة مستويات لمحاكاة OLED، مستقلة عن إعدادات الصورة الجاهزة."},
+    {"Enable OLED","تفعيل OLED"},
+    {"Gentle black shaping","تعديل خفيف لدرجات الأسود"},
+    {"Balanced depth and contrast","عمق وتباين متوازنان"},
+    {"Stronger black shaping and highlight roll-off","تعديل أقوى للأسود وتدرّج الإضاءات العالية"},
+    {"Select a level to enable OLED. Zero intensity bypasses OLED processing.","اختر مستوى لتفعيل OLED. الشدة صفر تعطل معالجة OLED."},
+    {"Reset OLED only","إعادة ضبط OLED فقط"},
+
     {"SESSION OBSERVATIONS","إحصاءات الجلسة"},
     {"Start capture to collect session observations","ابدأ الالتقاط لجمع إحصاءات الجلسة"},
     {"API-side counters, not displayed FPS or ghost-free frame counts","عدادات من واجهة البرمجة، وليست معدل العرض الفعلي أو عدد إطارات خالية من التشبح"},
@@ -283,8 +304,8 @@ bool Button(const char* label) {
  if(image.view) { frameReferences.push_back(image.view); ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(image.view.Get())),ImVec2(pos.x+12,pos.y+6),ImVec2(pos.x+12+image.size.x,pos.y+6+image.size.y)); }
  return clicked;
 }
-bool SliderFloat(const char* label,float* value,float lo,float hi,const char* format) { if(!rtl) return ImGui::SliderFloat(label,value,lo,hi,format); Label(label); ImGui::SetNextItemWidth(-1); return ImGui::SliderFloat(Id(label).c_str(),value,lo,hi,format); }
-bool SliderInt(const char* label,int* value,int lo,int hi) { if(!rtl) return ImGui::SliderInt(label,value,lo,hi); Label(label); ImGui::SetNextItemWidth(-1); return ImGui::SliderInt(Id(label).c_str(),value,lo,hi); }
+bool SliderFloat(const char* label,float* value,float lo,float hi,const char* format) { if(!rtl) ImGui::TextUnformatted(label); else Label(label); ImGui::SetNextItemWidth(-1); return ImGui::SliderFloat(Id(label).c_str(),value,lo,hi,format); }
+bool SliderInt(const char* label,int* value,int lo,int hi) { if(!rtl) ImGui::TextUnformatted(label); else Label(label); ImGui::SetNextItemWidth(-1); return ImGui::SliderInt(Id(label).c_str(),value,lo,hi); }
 bool CollapsingHeader(const char* label) {
  if(!rtl) return ImGui::CollapsingHeader(label);
  const auto pos=ImGui::GetCursorScreenPos(); bool open=ImGui::CollapsingHeader(Id(label).c_str());

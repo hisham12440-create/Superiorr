@@ -3,8 +3,11 @@
 namespace superior::filters {
 enum class Preset { Clean, Vivid, Cinematic, Competitive, Oled };
 inline void Apply(Preset preset, Settings& s) {
+    s.sharpnessEnabled = s.contrastEnabled = s.saturationEnabled = true;
+    s.brightnessEnabled = s.gammaEnabled = s.vibranceEnabled = s.temperatureEnabled = true;
+    s.temperature = 0;
     s.contrast = 1; s.saturation = 1; s.brightness = 0; s.gamma = 1;
-    s.sharpness = .5f; s.vibrance = .25f; s.oledLevel = 0; s.oledIntensity = 1;
+    s.sharpness = .5f; s.vibrance = .25f;
     switch (preset) {
         case Preset::Clean: s.sharpness = .2f; s.vibrance = 0; break;
         case Preset::Vivid: s.contrast = 1.08f; s.saturation = 1.08f; s.vibrance = .5f; break;

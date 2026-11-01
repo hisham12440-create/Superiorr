@@ -44,7 +44,7 @@ if(WIN32)
   FetchContent_MakeAvailable(ort_c_api)
   FetchContent_Declare(imgui URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.8.zip)
   FetchContent_MakeAvailable(imgui)
-  add_library(superior_ui STATIC src/ui/panel.cpp src/ui/localized.cpp
+  add_library(superior_ui STATIC src/ui/panel.cpp src/ui/filter_pages.cpp src/ui/localized.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp

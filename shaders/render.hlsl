@@ -27,6 +27,9 @@ cbuffer CB : register(b0)
     float splitPreview;
     float phase;
     float2 cbPadding;
+    float temperature;
+    float aaStrength;
+    float2 cbPadding2;
 };
 
 struct VSOut
@@ -152,7 +155,7 @@ float4 PSAA(VSOut i) : SV_Target
     float blend = saturate(max(g1, g2) / rng) * 0.85;
     float3 r = lerp(c, side, blend);
     r = lerp(r, box3, subpx);
-    return float4(r, 1);
+    return float4(lerp(c, r, saturate(aaStrength)), 1);
 }
 
 // ---------------------------------------------------------------- edge-adaptive upscale
@@ -254,7 +257,7 @@ float SkinMask(float3 c)
 float3 Oled(float3 c, float3 blur)
 {
     int lv = clamp(int(oledLevel + 0.5), 0, 3);
-    if (lv == 0) return c;
+    if (lv == 0 || oledIntensity <= 0) return c;
     float a = saturate(oledIntensity);
 
     float y = max(Lum(c), 1e-5);
@@ -331,6 +334,8 @@ float4 PSFinal(VSOut i) : SV_Target
     c = lerp(float3(colourLuma, colourLuma, colourLuma), c, saturation);
     c = saturate((c - 0.5) * contrast + 0.5 + brightness);
     c = pow(c, 1.0 / max(gamma, 0.5));
+    float warmth = clamp(temperature, -1.0, 1.0);
+    c = saturate(c * float3(1.0 + 0.12 * warmth, 1.0, 1.0 - 0.12 * warmth));
 
     // Triangular dither before the 8-bit back buffer: removes banding in gradients.
     float n1 = frac(sin(dot(p + frame, float2(12.9898, 78.233))) * 43758.5453);

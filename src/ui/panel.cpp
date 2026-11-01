@@ -22,6 +22,11 @@ void Check(HRESULT result, const char* message) {
 }
 LRESULT CALLBACK Panel::Proc(HWND window, UINT message, WPARAM w, LPARAM l) {
     if (ImGui::GetCurrentContext() && ImGui_ImplWin32_WndProcHandler(window, message, w, l)) return 1;
+    if (message == WM_GETMINMAXINFO) {
+        auto* limits = reinterpret_cast<MINMAXINFO*>(l);
+        limits->ptMinTrackSize = {680, 480};
+        return 0;
+    }
     if (message == WM_CLOSE) { ShowWindow(window, SW_HIDE); return 0; }
     return DefWindowProcW(window, message, w, l);
 }
@@ -38,7 +43,7 @@ void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, s
     if (!RegisterClassExW(&wc)) throw std::runtime_error("Cannot register settings window");
     window_ = CreateWindowExW(0, wc.lpszClassName, L"Superior | Control Center",
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 920, 980, nullptr, nullptr, instance, nullptr);
+        CW_USEDEFAULT, CW_USEDEFAULT, 1000, 780, nullptr, nullptr, instance, nullptr);
     if (!window_) throw std::runtime_error("Cannot create settings window");
     device->GetImmediateContext(&context_);
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi;
@@ -71,11 +76,15 @@ void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, s
     ImGui::StyleColorsDark();
     auto& style = ImGui::GetStyle();
     style.WindowRounding = 0;
+    style.ChildRounding = 8;
     style.FrameRounding = 6;
     style.GrabRounding = 6;
     style.FramePadding = ImVec2(12, 8);
     style.ItemSpacing = ImVec2(12, 14);
     style.Colors[ImGuiCol_WindowBg] = ImVec4(.025f,.035f,.065f,1);
+    style.Colors[ImGuiCol_ChildBg] = ImVec4(.035f,.05f,.085f,1);
+    style.Colors[ImGuiCol_Border] = ImVec4(.10f,.17f,.27f,1);
+    style.Colors[ImGuiCol_Header] = ImVec4(.05f,.28f,.65f,1);
     style.Colors[ImGuiCol_FrameBg] = ImVec4(.06f,.10f,.18f,1);
     style.Colors[ImGuiCol_Button] = ImVec4(.05f,.28f,.65f,1);
     style.Colors[ImGuiCol_ButtonHovered] = ImVec4(.08f,.40f,.90f,1);
@@ -126,19 +135,6 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
     if (safeMode) localized::TextColored(ImVec4(.3f,.7f,1,1), "SAFE MODE: frame generation is disabled");
     localized::TextDisabled("DirectX 11  |  Capture only  |  Prototype");
     ImGui::Separator();
-    localized::Text("SESSION   %s", localized::Value(!running ? "Ready" : paused ? "Paused - game not foreground" : "Capturing").c_str());
-    localized::TextWrapped("Use your Start / stop shortcut on the borderless game, or tray > Start with a 3-second delay. Close this panel to keep Superior in the tray.");
-    DrawSession();
-    localized::SeparatorText("HARDWARE / EFFICIENCY");
-    localized::TextWrapped("%s | %s | Tier %s", hw.adapter.c_str(), hw.vendor.c_str(), localized::Value(hardware::TierName(hw.tier)).c_str());
-    localized::Text("Dedicated %.0f MiB | Shared %.0f MiB", static_cast<double>(hw.dedicated) / hardware::MiB, static_cast<double>(hw.shared) / hardware::MiB);
-    if (hw.memoryKnown) localized::Text("DXGI process usage %.0f MiB | Budget %.0f MiB | Extra allowance %.0f MiB",
-        static_cast<double>(hw.usage) / hardware::MiB, static_cast<double>(hw.budget) / hardware::MiB, static_cast<double>(hw.available) / hardware::MiB);
-    else localized::TextDisabled("VRAM budget: n/a");
-    if (hw.timingKnown) localized::Text("Measured GPU group time %.2f ms | Group budget %.2f ms", hw.gpuMs, hw.targetMs);
-    else localized::TextDisabled("GPU render time: n/a (waiting for completed timestamp queries)");
-    localized::TextDisabled("Temperature / watts / clocks / ghost score: n/a");
-    localized::TextWrapped("%s", hw.reason.c_str());
     bool changed = false;
     int language = settings_->language == "ar" ? 1 : 0;
     const char* languages[] = {"English", "Arabic"};
@@ -146,84 +142,104 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
         settings_->language = language ? "ar" : "en";
         changed = true;
     }
-    if (localized::CollapsingHeader("GAME PROFILES")) {
-        changed |= localized::Checkbox("Load / save per-game image settings (next session)", &settings_->autoProfiles);
-        localized::TextWrapped("%s", profileStatus_.c_str());
-        localized::TextWrapped("Game profiles use the full executable path. While active, image edits save to that game; global image defaults are restored when capture stops.");
-    }
-    if (localized::CollapsingHeader("CUSTOM SHORTCUTS")) {
-        localized::TextWrapped("Choose a key and modifiers. Disabled removes the shortcut. Changes apply only when you press Apply. Windows may reject shortcuts already used by another app.");
-        for (size_t i = 0; i < draftKeys_.size(); ++i) {
-            ImGui::PushID(static_cast<int>(i));
-            localized::SeparatorText(kHotkeyNames[i]);
-            ImGui::SetNextItemWidth(160);
-            if (localized::BeginCombo("Key", KeyName(draftKeys_[i].key).c_str())) {
-                for (uint32_t key = 0; key <= 255; ++key) {
-                    if (SupportedKey(key) && localized::Selectable(KeyName(key).c_str(), draftKeys_[i].key == key))
-                        draftKeys_[i].key = key;
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::SameLine();
-            int mods = static_cast<int>(draftKeys_[i].modifiers);
-            localized::CheckboxFlags("Ctrl", &mods, 2); ImGui::SameLine();
-            localized::CheckboxFlags("Alt", &mods, 1); ImGui::SameLine();
-            localized::CheckboxFlags("Shift", &mods, 4); ImGui::SameLine();
-            localized::CheckboxFlags("Win", &mods, 8);
-            draftKeys_[i].modifiers = static_cast<uint32_t>(mods);
+    const bool rtl = settings_->language == "ar";
+    const float bodyHeight = std::max(180.f, ImGui::GetContentRegionAvail().y - 8.f);
+    if (ImGui::BeginTable("ControlLayout", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Left", rtl ? ImGuiTableColumnFlags_WidthStretch : ImGuiTableColumnFlags_WidthFixed, rtl ? 1.f : 165.f);
+        ImGui::TableSetupColumn("Right", rtl ? ImGuiTableColumnFlags_WidthFixed : ImGuiTableColumnFlags_WidthStretch, rtl ? 165.f : 1.f);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(rtl ? 1 : 0);
+        ImGui::BeginChild("Navigation", ImVec2(0, bodyHeight), ImGuiChildFlags_Borders);
+        const char* pages[] = {"Overview", "Image filters", "OLED display", "Quality tools", "Preferences"};
+        for (int i=0; i<5; ++i) {
+            ImGui::PushID(i);
+            if (localized::Selectable(pages[i], page_==i)) page_=i;
             ImGui::PopID();
+            ImGui::Spacing();
         }
-        localized::TextDisabled("F12 is reserved by Windows; at least one modifier is required.");
-        if (localized::Button("Apply shortcuts")) {
-            if (applyHotkeys_(draftKeys_, hotkeyStatus_)) hotkeyStatus_ = "Shortcuts applied";
+        ImGui::Separator();
+        if (localized::Button("Hide to tray")) ShowWindow(window_, SW_HIDE);
+        ImGui::EndChild();
+        ImGui::TableSetColumnIndex(rtl ? 0 : 1);
+        ImGui::PushID(page_);
+        ImGui::BeginChild("Page", ImVec2(0, bodyHeight), ImGuiChildFlags_Borders);
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * .60f);
+        localized::SeparatorText(pages[page_]);
+        if (page_ == 0) {
+            localized::Text("SESSION   %s", localized::Value(!running ? "Ready" : paused ? "Paused - game not foreground" : "Capturing").c_str());
+            localized::TextWrapped("Use your Start / stop shortcut on the borderless game, or tray > Start with a 3-second delay. Close this panel to keep Superior in the tray.");
+            const char* modes[] = {"Comfort", "Balanced", "Max"};
+            changed |= localized::Combo("Operating mode", &settings_->comfortMode, modes, 3);
+            changed |= localized::Checkbox("Frame generation", &settings_->frameGen);
+            changed |= localized::SliderInt("Maximum multiplier (Comfort caps x2)", &settings_->maxMultiplier, 2, 4);
+            localized::TextWrapped("Frame generation requires a game cap near half your display refresh. GPU quality and latency are not yet validated on hardware.");
+            localized::SeparatorText("HARDWARE / EFFICIENCY");
+            localized::TextWrapped("%s | %s | Tier %s", hw.adapter.c_str(), hw.vendor.c_str(), localized::Value(hardware::TierName(hw.tier)).c_str());
+            localized::Text("Dedicated %.0f MiB | Shared %.0f MiB", static_cast<double>(hw.dedicated) / hardware::MiB, static_cast<double>(hw.shared) / hardware::MiB);
+            if (hw.memoryKnown) localized::Text("DXGI process usage %.0f MiB | Budget %.0f MiB | Extra allowance %.0f MiB",
+                static_cast<double>(hw.usage) / hardware::MiB, static_cast<double>(hw.budget) / hardware::MiB, static_cast<double>(hw.available) / hardware::MiB);
+            else localized::TextDisabled("VRAM budget: n/a");
+            if (hw.timingKnown) localized::Text("Measured GPU group time %.2f ms | Group budget %.2f ms", hw.gpuMs, hw.targetMs);
+            else localized::TextDisabled("GPU render time: n/a (waiting for completed timestamp queries)");
+            localized::TextDisabled("Temperature / watts / clocks / ghost score: n/a");
+            localized::TextWrapped("%s", hw.reason.c_str());
+            DrawSession();
+        } else if (page_ == 1) {
+            changed |= DrawFilters();
+        } else if (page_ == 2) {
+            changed |= DrawOled();
+        } else if (page_ == 3) {
+            if (localized::CollapsingHeader("Neural SR")) {
+                localized::TextWrapped("Neural live path is unavailable; spatial fallback is active.");
+                localized::TextWrapped("Offline DirectML inference: Superior.exe --neural input.pgm output.pgm model.onnx");
+            }
+            DrawVerification(running);
+        } else {
+            if (localized::CollapsingHeader("GAME PROFILES")) {
+                changed |= localized::Checkbox("Load / save per-game image settings (next session)", &settings_->autoProfiles);
+                localized::TextWrapped("%s", profileStatus_.c_str());
+                localized::TextWrapped("Game profiles use the full executable path. While active, image edits save to that game; global image defaults are restored when capture stops.");
+            }
+            if (localized::CollapsingHeader("CUSTOM SHORTCUTS")) {
+                localized::TextWrapped("Choose a key and modifiers. Disabled removes the shortcut. Changes apply only when you press Apply. Windows may reject shortcuts already used by another app.");
+                for (size_t i = 0; i < draftKeys_.size(); ++i) {
+                    ImGui::PushID(static_cast<int>(i));
+                    localized::SeparatorText(kHotkeyNames[i]);
+                    ImGui::SetNextItemWidth(160);
+                    if (localized::BeginCombo("Key", KeyName(draftKeys_[i].key).c_str())) {
+                        for (uint32_t key = 0; key <= 255; ++key) {
+                            if (SupportedKey(key) && localized::Selectable(KeyName(key).c_str(), draftKeys_[i].key == key))
+                                draftKeys_[i].key = key;
+                        }
+                        ImGui::EndCombo();
+                    }
+                    int mods = static_cast<int>(draftKeys_[i].modifiers);
+                    localized::CheckboxFlags("Ctrl", &mods, 2); ImGui::SameLine();
+                    localized::CheckboxFlags("Alt", &mods, 1); ImGui::SameLine();
+                    localized::CheckboxFlags("Shift", &mods, 4); ImGui::SameLine();
+                    localized::CheckboxFlags("Win", &mods, 8);
+                    draftKeys_[i].modifiers = static_cast<uint32_t>(mods);
+                    ImGui::PopID();
         }
-        ImGui::SameLine();
-        if (localized::Button("Edit default shortcuts")) draftKeys_ = DefaultHotkeys();
-        ImGui::SameLine();
-        if (localized::Button("Discard shortcut edits")) { draftKeys_ = settings_->hotkeys; hotkeyStatus_.clear(); }
-        localized::TextWrapped("%s", hotkeyStatus_.c_str());
-    }
-    const char* modes[] = {"Comfort", "Balanced", "Max"};
-    changed |= localized::Combo("Operating mode", &settings_->comfortMode, modes, 3);
-    changed |= localized::Checkbox("Frame generation", &settings_->frameGen);
-    if (settings_->language != "ar") ImGui::SameLine(350);
-    changed |= localized::Checkbox("Anti-aliasing", &settings_->antiAlias);
-    changed |= localized::SliderInt("Maximum multiplier (Comfort caps x2)", &settings_->maxMultiplier, 2, 4);
-    changed |= localized::SliderFloat("Sharpness", &settings_->sharpness, 0, 1, "%.2f");
-    changed |= localized::SliderFloat("Contrast", &settings_->contrast, .5f, 2, "%.2f");
-    changed |= localized::SliderFloat("Saturation", &settings_->saturation, 0, 2, "%.2f");
-    changed |= localized::SliderFloat("Brightness", &settings_->brightness, -.25f, .25f, "%.2f");
-    changed |= localized::SliderFloat("Gamma", &settings_->gamma, .5f, 2, "%.2f");
-    changed |= localized::Checkbox("Before / after split (left is original)", &settings_->splitPreview);
-    const char* presetNames[] = {"Clean", "Vivid", "Cinematic", "Competitive", "OLED"};
-    if (localized::BeginCombo("Apply image preset", "Choose preset")) {
-        for (int i = 0; i < 5; ++i) {
-            if (localized::Selectable(presetNames[i])) {
-                filters::Apply(static_cast<filters::Preset>(i), *settings_);
+                localized::TextDisabled("F12 is reserved by Windows; at least one modifier is required.");
+                if (localized::Button("Apply shortcuts")) {
+                    if (applyHotkeys_(draftKeys_, hotkeyStatus_)) hotkeyStatus_ = "Shortcuts applied";
+        }
+                if (localized::Button("Edit default shortcuts")) draftKeys_ = DefaultHotkeys();
+                if (localized::Button("Discard shortcut edits")) { draftKeys_ = settings_->hotkeys; hotkeyStatus_.clear(); }
+                localized::TextWrapped("%s", hotkeyStatus_.c_str());
+            }
+            if (localized::Button("Reset image settings")) {
+                Settings defaults;
+                CopyGameSettings(*settings_, defaults);
                 changed = true;
             }
         }
-        ImGui::EndCombo();
+        ImGui::PopItemWidth();
+        ImGui::EndChild();
+        ImGui::PopID();
+        ImGui::EndTable();
     }
-    changed |= localized::SliderFloat("Vibrance", &settings_->vibrance, 0, 1, "%.2f");
-    const char* levels[] = {"Off", "Light", "Medium", "Strong"};
-    changed |= localized::Combo("OLED emulation", &settings_->oledLevel, levels, 4);
-    changed |= localized::SliderFloat("OLED intensity", &settings_->oledIntensity, 0, 1, "%.2f");
-    ImGui::Separator();
-    localized::TextDisabled("OLED is an emulation; LCD black levels cannot be changed.");
-    localized::TextWrapped("Frame generation requires a game cap near half your display refresh. GPU quality and latency are not yet validated on hardware.");
-    if (localized::CollapsingHeader("Neural SR")) {
-        localized::TextWrapped("Neural live path is unavailable; spatial fallback is active.");
-        localized::TextWrapped("Offline DirectML inference: Superior.exe --neural input.pgm output.pgm model.onnx");
-    }
-    DrawVerification(running);
-    if (localized::Button("Reset image settings")) {
-        Settings defaults;
-        CopyGameSettings(*settings_, defaults);
-        changed = true;
-    }
-    ImGui::SameLine();
-    if (localized::Button("Hide to tray")) ShowWindow(window_, SW_HIDE);
     if (changed) { settings_->Clamp(); save_(); }
     ImGui::End();
     ImGui::Render();

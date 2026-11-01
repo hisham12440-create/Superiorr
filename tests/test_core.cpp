@@ -681,3 +681,73 @@ TEST(Session, NonfiniteMeasurementDoesNotInventTimingSamples) {
     EXPECT_EQ(s.lateStartMs.samples,0u); EXPECT_EQ(s.returnIntervalMs.samples,0u);
     EXPECT_TRUE(s.Consistent());
 }
+
+#include "filters/parameters.h"
+TEST(Filters, IndependentBypassUsesNeutralValuesWithoutErasingSliders) {
+    Settings s;
+    s.sharpness=.8f; s.contrast=1.5f; s.saturation=1.6f;
+    s.brightness=.2f; s.gamma=1.4f; s.vibrance=.7f; s.temperature=.8f; s.aaStrength=.6f;
+    s.sharpnessEnabled=s.contrastEnabled=s.saturationEnabled=false;
+    s.brightnessEnabled=s.gammaEnabled=s.vibranceEnabled=s.temperatureEnabled=false;
+    s.antiAlias=false;
+    const auto p=filters::Effective(s);
+    EXPECT_FLOAT_EQ(p.sharpness,0); EXPECT_FLOAT_EQ(p.contrast,1);
+    EXPECT_FLOAT_EQ(p.saturation,1); EXPECT_FLOAT_EQ(p.brightness,0);
+    EXPECT_FLOAT_EQ(p.gamma,1); EXPECT_FLOAT_EQ(p.vibrance,0);
+    EXPECT_FLOAT_EQ(p.temperature,0); EXPECT_FLOAT_EQ(p.aaStrength,0);
+    EXPECT_FLOAT_EQ(s.temperature,.8f); EXPECT_FLOAT_EQ(s.contrast,1.5f);
+    s.temperatureEnabled=true; s.antiAlias=true;
+    EXPECT_FLOAT_EQ(filters::Effective(s).temperature,.8f);
+    EXPECT_FLOAT_EQ(filters::Effective(s).aaStrength,.6f);
+}
+TEST(Filters, NewControlsPersistAndClampWithBackwardCompatibleDefaults) {
+    Settings s;
+    ASSERT_TRUE(FromJson(R"({"temperature":-9,"aa_strength":4,"temperature_enabled":false,"contrast_enabled":false,"sharpness_enabled":false,"saturation_enabled":false,"brightness_enabled":false,"gamma_enabled":false,"vibrance_enabled":false})",s));
+    EXPECT_FLOAT_EQ(s.temperature,-1); EXPECT_FLOAT_EQ(s.aaStrength,1);
+    Settings copy; ASSERT_TRUE(FromJson(ToJson(s),copy));
+    EXPECT_FALSE(copy.temperatureEnabled); EXPECT_FALSE(copy.contrastEnabled);
+    EXPECT_FALSE(copy.sharpnessEnabled); EXPECT_FALSE(copy.saturationEnabled);
+    EXPECT_FALSE(copy.brightnessEnabled); EXPECT_FALSE(copy.gammaEnabled); EXPECT_FALSE(copy.vibranceEnabled);
+    EXPECT_FLOAT_EQ(copy.temperature,-1); EXPECT_FLOAT_EQ(copy.aaStrength,1);
+    Settings legacy; ASSERT_TRUE(FromJson("{}",legacy));
+    EXPECT_TRUE(legacy.sharpnessEnabled); EXPECT_TRUE(legacy.temperatureEnabled);
+    EXPECT_FLOAT_EQ(legacy.temperature,0); EXPECT_FLOAT_EQ(legacy.aaStrength,1);
+}
+TEST(Filters, GameSettingsCopyIncludesFilterBypassesAndTemperature) {
+    Settings source,destination;
+    source.temperature=-.6f; source.aaStrength=.3f;
+    source.sharpnessEnabled=source.contrastEnabled=source.saturationEnabled=false;
+    source.brightnessEnabled=source.gammaEnabled=source.vibranceEnabled=source.temperatureEnabled=false;
+    destination.language="ar";
+    CopyGameSettings(destination,source);
+    EXPECT_FLOAT_EQ(destination.temperature,-.6f); EXPECT_FLOAT_EQ(destination.aaStrength,.3f);
+    EXPECT_FALSE(destination.sharpnessEnabled); EXPECT_FALSE(destination.contrastEnabled);
+    EXPECT_FALSE(destination.saturationEnabled); EXPECT_FALSE(destination.brightnessEnabled);
+    EXPECT_FALSE(destination.gammaEnabled); EXPECT_FALSE(destination.vibranceEnabled); EXPECT_FALSE(destination.temperatureEnabled);
+    EXPECT_EQ(destination.language,"ar");
+}
+TEST(Filters, ImagePresetsDoNotModifyIndependentOledOrAA) {
+    for(int i=0;i<4;++i) {
+        Settings s; s.oledLevel=3; s.oledIntensity=.4f; s.antiAlias=false; s.aaStrength=.2f;
+        filters::Apply(static_cast<filters::Preset>(i),s);
+        EXPECT_EQ(s.oledLevel,3); EXPECT_FLOAT_EQ(s.oledIntensity,.4f);
+        EXPECT_FALSE(s.antiAlias); EXPECT_FLOAT_EQ(s.aaStrength,.2f);
+    }
+}
+TEST(Filters, TemperatureReferenceIsNeutralAndWarmCoolHaveOppositeGains) {
+    const filters::Rgb input{.4f,.5f,.6f};
+    const auto neutral=filters::Temperature(input,0);
+    EXPECT_FLOAT_EQ(neutral.r,input.r); EXPECT_FLOAT_EQ(neutral.g,input.g); EXPECT_FLOAT_EQ(neutral.b,input.b);
+    const auto warm=filters::Temperature(input,1), cool=filters::Temperature(input,-1);
+    EXPECT_GT(warm.r,input.r); EXPECT_LT(warm.b,input.b); EXPECT_FLOAT_EQ(warm.g,input.g);
+    EXPECT_LT(cool.r,input.r); EXPECT_GT(cool.b,input.b);
+    const auto clipped=filters::Temperature({1,1,1},1);
+    EXPECT_FLOAT_EQ(clipped.r,1);
+}
+TEST(Oled, ZeroIntensityIsExactIdentityAtEveryActiveLevel) {
+    for(int level=1;level<=3;++level)
+        for(int i=0;i<=1000;++i) {
+            const float y=i/1000.f;
+            EXPECT_FLOAT_EQ(OledCurve(y,level,0),y);
+        }
+}

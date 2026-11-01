@@ -322,3 +322,24 @@ and after stopping; verify each path's scheduled count equals submitted +
 occluded + other + failed + discarded + pending. Test Arabic labels and exiting
 from the tray while the export dialog is open. Device-loss recovery and real
 screen presentation measurements remain future work in the development plan.
+
+### Control Center: pages, eight filters and OLED
+
+The blue/black panel now has a persistent navigation rail: **Overview**, **Image filters**,
+**OLED display**, **Quality tools**, and **Preferences**. The rail moves to the right in
+Arabic. Each page scrolls independently; filters use two columns when space permits.
+Profiles, shortcut editing, session JSON export and offline verification remain available.
+
+Eight actual shader controls: anti-aliasing (with strength), sharpness, contrast,
+saturation, brightness, gamma, vibrance and warm/cool **color temperature**. Each has
+an independent bypass that keeps its slider value. Temperature is an artistic RGB gain,
+not calibrated Kelvin or HDR conversion; it is fused into the existing final pass.
+New values and bypasses are saved globally and in game profiles, with defaults for old JSON.
+
+The separate OLED page offers **Light / Medium / Strong**, an enable switch, intensity,
+and an OLED-only reset. Selecting a level enables it; zero intensity now bypasses OLED
+exactly (before final dithering). This simulates tone response; it cannot turn an LCD into
+an OLED. The four image presets no longer change OLED or AA preferences. Filter-only reset
+also leaves OLED intact. The Preferences reset retains its existing image/session scope.
+Windows CI validates compilation, shaders and CPU references, not the rendered appearance;
+Arabic shaping, DPI, window resizing and real GPU output still require manual Windows testing.

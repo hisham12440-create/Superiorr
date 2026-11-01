@@ -19,6 +19,8 @@ void Settings::Clamp() {
     saturation = std::min(2.0f, std::max(0.0f, saturation));
     brightness = std::min(0.25f, std::max(-0.25f, brightness));
     gamma = std::min(2.0f, std::max(0.5f, gamma));
+    aaStrength = std::clamp(aaStrength, 0.0f, 1.0f);
+    temperature = std::clamp(temperature, -1.0f, 1.0f);
     vibrance = std::min(1.0f, std::max(0.0f, vibrance));
 }
 
@@ -28,6 +30,15 @@ std::string ToJson(const Settings& s) {
     j["hotkeys"] = nlohmann::json::array();
     for (const auto& key : s.hotkeys)
         j["hotkeys"].push_back({{"key",key.key}, {"modifiers",key.modifiers}});
+    j["sharpness_enabled"] = s.sharpnessEnabled;
+    j["contrast_enabled"] = s.contrastEnabled;
+    j["saturation_enabled"] = s.saturationEnabled;
+    j["brightness_enabled"] = s.brightnessEnabled;
+    j["gamma_enabled"] = s.gammaEnabled;
+    j["vibrance_enabled"] = s.vibranceEnabled;
+    j["temperature_enabled"] = s.temperatureEnabled;
+    j["aa_strength"] = s.aaStrength;
+    j["temperature"] = s.temperature;
     j["contrast"] = s.contrast;
     j["saturation"] = s.saturation;
     j["brightness"] = s.brightness;
@@ -63,6 +74,15 @@ bool FromJson(const std::string& text, Settings& out) {
             std::string error;
             if (!ValidateHotkeys(s.hotkeys, error)) return false;
         }
+        s.sharpnessEnabled = j.value("sharpness_enabled", s.sharpnessEnabled);
+        s.contrastEnabled = j.value("contrast_enabled", s.contrastEnabled);
+        s.saturationEnabled = j.value("saturation_enabled", s.saturationEnabled);
+        s.brightnessEnabled = j.value("brightness_enabled", s.brightnessEnabled);
+        s.gammaEnabled = j.value("gamma_enabled", s.gammaEnabled);
+        s.vibranceEnabled = j.value("vibrance_enabled", s.vibranceEnabled);
+        s.temperatureEnabled = j.value("temperature_enabled", s.temperatureEnabled);
+        s.aaStrength = j.value("aa_strength", s.aaStrength);
+        s.temperature = j.value("temperature", s.temperature);
         s.contrast = j.value("contrast", s.contrast);
         s.saturation = j.value("saturation", s.saturation);
         s.brightness = j.value("brightness", s.brightness);

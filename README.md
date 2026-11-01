@@ -172,3 +172,71 @@ The earlier roadmap table's filter/distribution rows are superseded only by
 these colour controls, presets, split preview and safe-mode additions. LUTs,
 per-game profiles, learned models, full RTL and the 99% validation corpus are
 still absent. No real-GPU pass rate or watt-saving number is available.
+
+## Custom shortcuts, game profiles and writable storage
+
+**CUSTOM SHORTCUTS** in Control Center edits all 12 global actions using a key
+selector and Ctrl/Alt/Shift/Win toggles. Choose Disabled to remove an action.
+At least one modifier is required. F12 is excluded because Windows reserves it.
+The editor is a draft until **Apply shortcuts** is pressed. Duplicate or invalid
+bindings are rejected before touching the active set. If Windows rejects a
+registration (for example another app owns it), Superior attempts to restore the
+old set and displays the failure; if restoration also fails, use the tray menu.
+The default shortcuts in the usage table are defaults, not fixed bindings.
+
+**GAME PROFILES** enables automatic image-profile loading when capture starts.
+The target executable is queried with limited process information rights, without
+admin privileges or injection. Its normalized full path identifies the profile,
+so two executables with the same name in different folders remain separate.
+The full executable path is stored locally in the profile; it is never uploaded.
+Protected processes may deny the query; Superior reports that condition and uses
+global settings without creating a game profile. This identification does not
+identify which GPU renders the game.
+
+While a game profile is active, edits to colour, OLED, AA, frame generation and
+operating mode save to `profiles/<stable-key>.json`. Global image defaults return
+when capture stops. Language, shortcuts, split preview and the profiles toggle
+stay global. The toggle applies to the **next** session. Missing/invalid profiles
+leave current image defaults unchanged; edits can then create a replacement.
+Profile files have a schema version and verify the stored executable identity
+before applying any settings. Profile hashing is a filename mechanism, not a
+security or cryptographic guarantee. There is no auto-start/game launcher yet.
+
+Superior first checks whether it can write beside its executable. If not, it
+uses `%LOCALAPPDATA%\Superior`. Settings, profiles and logs all use that selected
+location. This is a storage fallback, not automatic migration between locations.
+Windows Unicode paths are used for settings, profiles **and rotating logs**.
+Settings/profile files are size-limited on read and replaced atomically; failed
+replacement cleans its temporary file. Saves occur on the UI thread and are not
+intended for concurrent multi-process writers.
+
+The control panel redraw is capped at roughly 30 Hz to avoid unnecessary UI GPU
+work. Resuming a game still invalidates interpolation history. Capture-event,
+process-query and single-instance handles now have RAII ownership. Startup
+checks for event, window class, control-window and tray creation failures; it
+exits rather than leaving an invisible app with no tray controls. Failed message
+waits exit instead of spinning. WinRT initialization errors have a visible
+Windows error dialog. The ordinary log flushes each line but is **not a crash
+dump or a guarantee against data loss on power failure**.
+
+### Verification for this update
+
+CPU tests cover key validation/duplicates and JSON round trips, per-game profile
+isolation, corrupt/mismatched profile rejection, preservation of global
+preferences, bounded file reads, atomic replacement and failed-replacement
+cleanup, Unicode settings filenames and Unicode log rotation. Windows hotkey
+registration, permissions fallback and game integration require manual testing:
+
+1. Change Start/stop to Ctrl+Shift+F2, apply, restart, and test on a game.
+2. Try a duplicate binding: the editor must reject it without changing shortcuts.
+3. Occupy a shortcut in another app and confirm the error and rollback behavior.
+4. Save different image settings for two games; verify restore when switching.
+5. Stop capture and verify global image defaults return; language/hotkeys stay.
+6. Run from an Arabic-named directory, check saved settings and `superior.log`.
+7. Run from a nonwritable directory, verify files under LocalAppData\Superior.
+8. Verify slider edits during a game profile do not overwrite global image defaults.
+
+The roadmap's earlier statements about fixed shortcuts, absent per-game image
+profiles and Arabic-path logging are superseded by this section. Full shaped
+Arabic/RTL UI, neural SR, bidirectional flow, real quality benchmarking and the
+99% validation target remain unfinished and unmeasured.

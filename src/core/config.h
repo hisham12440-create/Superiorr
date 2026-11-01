@@ -1,9 +1,12 @@
 #pragma once
 #include <string>
+#include "core/hotkeys.h"
 
 namespace superior {
 
 struct Settings {
+    Hotkeys hotkeys = DefaultHotkeys();
+    bool autoProfiles = true;
     std::string language = "en";   // "en" or "ar"
     int comfortMode = 0;          // 0 Comfort, 1 Balanced, 2 Max
     int oledLevel = 0;             // 0 = off, 1 = light, 2 = medium, 3 = strong

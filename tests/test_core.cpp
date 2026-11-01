@@ -225,3 +225,137 @@ TEST(Filters, PresetsPreserveSessionAndLanguagePreferences) {
         EXPECT_FLOAT_EQ(settings.contrast, copy.contrast);
     }
 }
+
+#include "core/profiles.h"
+#include "core/files.h"
+#include <atomic>
+#include <fstream>
+
+namespace {
+class StorageTest : public ::testing::Test {
+protected:
+    std::filesystem::path directory;
+    void SetUp() override {
+        static std::atomic<unsigned> sequence{0};
+        directory = std::filesystem::temp_directory_path() /
+            ("superior-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+             "-" + std::to_string(sequence++));
+        std::filesystem::create_directories(directory);
+    }
+    void TearDown() override {
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+    }
+};
+}
+TEST(Hotkeys, DefaultsAreValidAndKeysHaveReadableNames) {
+    std::string error;
+    EXPECT_TRUE(ValidateHotkeys(DefaultHotkeys(), error));
+    EXPECT_EQ(KeyName('A'), "A");
+    EXPECT_EQ(KeyName(0x26), "Up");
+    EXPECT_EQ(KeyName(0x7A), "F11");
+    EXPECT_EQ(KeyName(0), "Disabled");
+}
+TEST(Hotkeys, DuplicateAndUnsupportedBindingsAreRejected) {
+    auto keys = DefaultHotkeys();
+    std::string error;
+    keys[1] = keys[0];
+    EXPECT_FALSE(ValidateHotkeys(keys, error));
+    EXPECT_FALSE(error.empty());
+    keys[1] = {0,0};
+    EXPECT_TRUE(ValidateHotkeys(keys, error));
+    keys[1] = {'B',0};
+    EXPECT_FALSE(ValidateHotkeys(keys, error));
+    keys[1] = {0x7B,3}; // Windows reserves F12.
+    EXPECT_FALSE(ValidateHotkeys(keys, error));
+}
+TEST(Hotkeys, JsonRoundTripAndAtomicRejection) {
+    Settings original;
+    original.hotkeys[0] = {0x70,6};
+    original.autoProfiles = false;
+    Settings loaded;
+    ASSERT_TRUE(FromJson(ToJson(original), loaded));
+    EXPECT_EQ(loaded.hotkeys, original.hotkeys);
+    EXPECT_FALSE(loaded.autoProfiles);
+    const auto before = ToJson(loaded);
+    EXPECT_FALSE(FromJson(R"({"language":"ar","hotkeys":[]})", loaded));
+    EXPECT_EQ(ToJson(loaded), before);
+}
+TEST_F(StorageTest, AtomicReplacementAndBoundedRead) {
+    const auto path = directory / "settings.json";
+    ASSERT_TRUE(WriteTextAtomic(path, "old"));
+    ASSERT_TRUE(WriteTextAtomic(path, "new contents"));
+    std::string text;
+    ASSERT_TRUE(ReadText(path, text));
+    EXPECT_EQ(text, "new contents");
+    EXPECT_FALSE(ReadText(path, text, 3));
+    EXPECT_EQ(text, "new contents");
+    EXPECT_FALSE(std::filesystem::exists(directory / "settings.json.tmp"));
+    EXPECT_FALSE(WriteTextAtomic(directory / "absent" / "file", "x"));
+}
+TEST_F(StorageTest, UnicodeSettingsPath) {
+    const auto path = directory / std::filesystem::u8path(u8"إعدادات.json");
+    Settings original;
+    original.language = "ar";
+    ASSERT_TRUE(SaveSettings(path.u8string(), original));
+    Settings restored;
+    ASSERT_TRUE(LoadSettings(path.u8string(), restored));
+    EXPECT_EQ(restored.language, "ar");
+}
+TEST_F(StorageTest, GameProfilesPreserveGlobalPreferencesAndIsolation) {
+    Settings game;
+    game.sharpness = .8f; game.gamma = 1.2f; game.language = "ar";
+    ASSERT_TRUE(SaveGameProfile(directory, "c:/games/a/game.exe", game));
+    Settings target;
+    target.hotkeys[0] = {0x70,6};
+    target.autoProfiles = false;
+    target.splitPreview = true;
+    ASSERT_TRUE(LoadGameProfile(directory, "c:/games/a/game.exe", target));
+    EXPECT_FLOAT_EQ(target.sharpness, .8f);
+    EXPECT_FLOAT_EQ(target.gamma, 1.2f);
+    EXPECT_EQ(target.language, "en");
+    EXPECT_EQ(target.hotkeys[0].key, 0x70u);
+    EXPECT_FALSE(target.autoProfiles);
+    EXPECT_TRUE(target.splitPreview);
+    EXPECT_FALSE(LoadGameProfile(directory, "c:/games/b/game.exe", target));
+    EXPECT_NE(ProfileKey("c:/games/a/game.exe"), ProfileKey("c:/games/b/game.exe"));
+}
+TEST_F(StorageTest, CorruptAndMismatchedProfilesDoNotModifySettings) {
+    const std::string identity = "c:/games/game.exe";
+    const auto path = directory / (ProfileKey(identity) + ".json");
+    Settings target;
+    target.sharpness = .9f;
+    const auto before = ToJson(target);
+    ASSERT_TRUE(WriteTextAtomic(path, "{bad json"));
+    EXPECT_FALSE(LoadGameProfile(directory, identity, target));
+    EXPECT_EQ(ToJson(target), before);
+    ASSERT_TRUE(WriteTextAtomic(path, R"({"version":1,"executable":"wrong","settings":{"sharpness":0}})"));
+    EXPECT_FALSE(LoadGameProfile(directory, identity, target));
+    EXPECT_EQ(ToJson(target), before);
+    EXPECT_FALSE(SaveGameProfile(directory, "", target));
+}
+TEST_F(StorageTest, FailedReplacementPreservesDestinationAndCleansTemporary) {
+    const auto destination = directory / "occupied";
+    std::filesystem::create_directory(destination);
+    ASSERT_TRUE(WriteTextAtomic(destination / "keep.txt", "original"));
+    EXPECT_FALSE(WriteTextAtomic(destination, "replacement"));
+    std::string text;
+    ASSERT_TRUE(ReadText(destination / "keep.txt", text));
+    EXPECT_EQ(text, "original");
+    EXPECT_FALSE(std::filesystem::exists(directory / "occupied.tmp"));
+}
+#include "core/log.h"
+TEST_F(StorageTest, UnicodeLogAndRotation) {
+    const auto path = directory / std::filesystem::u8path(u8"سجل.log");
+    ASSERT_TRUE(Log::Open(path.u8string()));
+    const std::string large(1024 * 1024 + 1, 'x');
+    Log::Write("TEST", "%s", large.c_str());
+    Log::Write("TEST", "after rotation");
+    Log::Close();
+    auto backup = path;
+    backup += ".1";
+    EXPECT_TRUE(std::filesystem::exists(backup));
+    std::string text;
+    ASSERT_TRUE(ReadText(path, text));
+    EXPECT_NE(text.find("after rotation"), std::string::npos);
+}

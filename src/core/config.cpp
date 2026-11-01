@@ -1,12 +1,8 @@
 #include "config.h"
+#include "files.h"
 
 #include <algorithm>
-#include <fstream>
 #include <filesystem>
-#ifdef _WIN32
-#include <windows.h>
-#endif
-#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -27,6 +23,10 @@ void Settings::Clamp() {
 
 std::string ToJson(const Settings& s) {
     nlohmann::json j;
+    j["auto_profiles"] = s.autoProfiles;
+    j["hotkeys"] = nlohmann::json::array();
+    for (const auto& key : s.hotkeys)
+        j["hotkeys"].push_back({{"key",key.key}, {"modifiers",key.modifiers}});
     j["contrast"] = s.contrast;
     j["saturation"] = s.saturation;
     j["brightness"] = s.brightness;
@@ -47,6 +47,20 @@ bool FromJson(const std::string& text, Settings& out) {
     try {
         nlohmann::json j = nlohmann::json::parse(text);
         Settings s = out;
+        s.autoProfiles = j.value("auto_profiles", s.autoProfiles);
+        if (j.contains("hotkeys")) {
+            const auto& keys = j.at("hotkeys");
+            if (!keys.is_array() || keys.size() != kHotkeyCount) return false;
+            for (size_t i = 0; i < kHotkeyCount; ++i) {
+                if (!keys[i].at("key").is_number_integer() || !keys[i].at("modifiers").is_number_integer()) return false;
+                const auto key = keys[i].at("key").get<int64_t>();
+                const auto modifiers = keys[i].at("modifiers").get<int64_t>();
+                if (key < 0 || key > 255 || modifiers < 0 || modifiers > 15) return false;
+                s.hotkeys[i] = {static_cast<uint32_t>(key), static_cast<uint32_t>(modifiers)};
+            }
+            std::string error;
+            if (!ValidateHotkeys(s.hotkeys, error)) return false;
+        }
         s.contrast = j.value("contrast", s.contrast);
         s.saturation = j.value("saturation", s.saturation);
         s.brightness = j.value("brightness", s.brightness);
@@ -69,35 +83,13 @@ bool FromJson(const std::string& text, Settings& out) {
 }
 
 bool LoadSettings(const std::string& path, Settings& out) {
-    std::ifstream f(std::filesystem::u8path(path));
-    if (!f) return false;
-    std::stringstream ss;
-    ss << f.rdbuf();
-    return FromJson(ss.str(), out);
+    std::string text;
+    return ReadText(std::filesystem::u8path(path), text) && FromJson(text, out);
 }
 
 bool SaveSettings(const std::string& path, const Settings& s) {
-    try {
-        const auto destination = std::filesystem::u8path(path);
-        auto temporary = destination;
-        temporary += ".tmp";
-        std::ofstream f(temporary, std::ios::trunc);
-        if (!f) return false;
-        f << ToJson(s);
-        f.flush();
-        const bool written = static_cast<bool>(f);
-        f.close();
-        if (!written || f.fail()) return false;
-#ifdef _WIN32
-        if (!MoveFileExW(temporary.c_str(), destination.c_str(),
-                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return false;
-#else
-        std::filesystem::rename(temporary, destination);
-#endif
-        return true;
-    } catch (const std::exception&) {
-        return false;
-    }
+    try { return WriteTextAtomic(std::filesystem::u8path(path), ToJson(s)); }
+    catch (const std::exception&) { return false; }
 }
 
 }  // namespace superior

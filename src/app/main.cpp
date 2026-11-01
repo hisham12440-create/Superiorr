@@ -7,8 +7,14 @@
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <filesystem>
+#include <vector>
 
 #include "app/capture.h"
+#include "app/hotkey_manager.h"
+#include "app/unique_handle.h"
+#include "core/profiles.h"
+#include "core/files.h"
 #include "app/renderer.h"
 #include "core/config.h"
 #include "core/log.h"
@@ -32,13 +38,17 @@ struct App {
     std::wstring dir;
     std::string settingsPath;
     Settings st;
+    Settings globalImageDefaults;
+    bool profileSession = false;
+    std::string gameExecutable;
+    HotkeyManager hotkeys;
     Renderer gfx;
     Capture cap;
     Panel panel;
     hardware::Monitor monitor;
     bool paused = false;
     bool safeMode = false;
-    HANDLE frameEvent = nullptr;
+    UniqueHandle frameEvent;
     NOTIFYICONDATAW nid{};
 
     bool running = false;
@@ -68,6 +78,7 @@ double NowMs() {
 std::string ToUtf8(const std::wstring& w) {
     if (w.empty()) return {};
     const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 0) throw std::runtime_error("UTF-8 conversion failed");
     std::string s(static_cast<size_t>(n), '\0');
     WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
     s.resize(static_cast<size_t>(n) - 1);
@@ -107,11 +118,39 @@ void UpdateTip() {
     Shell_NotifyIconW(NIM_MODIFY, &g.nid);
 }
 
+std::string ExecutableForWindow(HWND window) {
+    DWORD processId = 0;
+    if (!GetWindowThreadProcessId(window, &processId)) return {};
+    UniqueHandle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId));
+    if (!process) return {};
+    std::vector<wchar_t> path(32768);
+    DWORD length = static_cast<DWORD>(path.size());
+    if (!QueryFullProcessImageNameW(process.Get(), 0, path.data(), &length)) return {};
+    // Normalize through the Windows Unicode casing rules before hashing.
+    if (length && !CharLowerBuffW(path.data(), length)) return {};
+    return ToUtf8(std::wstring(path.data(), length));
+}
+
 void SaveAndRefresh() {
     g.st.Clamp();
-    if (!SaveSettings(g.settingsPath, g.st))
+    Settings globals = g.st;
+    if (g.profileSession) {
+        CopyGameSettings(globals, g.globalImageDefaults);
+        if (!SaveGameProfile(std::filesystem::path(g.dir) / L"profiles", g.gameExecutable, g.st)) {
+            g.panel.SetProfileStatus("Game profile save failed. Check folder permissions.");
+            Notify(L"Superior", L"Game profile could not be saved. Check folder permissions.");
+        } else g.panel.SetProfileStatus("Game profile saved: " + g.gameExecutable);
+    }
+    if (!SaveSettings(g.settingsPath, globals))
         Notify(L"Superior", L"Settings could not be saved. Check folder permissions.");
     UpdateTip();
+}
+
+bool ApplyShortcuts(const Hotkeys& keys, std::string& error) {
+    if (!g.hotkeys.Apply(g.main, keys, error)) return false;
+    g.st.hotkeys = keys;
+    SaveAndRefresh();
+    return true;
 }
 
 LRESULT CALLBACK OverlayProc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -122,6 +161,7 @@ LRESULT CALLBACK OverlayProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 void StopSession(const wchar_t* why) {
     if (!g.running && !g.overlay) return;
+    KillTimer(g.main, kStartTimer);
     g.cap.Stop();
     g.gfx.DestroyOutput();
     if (g.overlay) {
@@ -129,6 +169,10 @@ void StopSession(const wchar_t* why) {
         g.overlay = nullptr;
     }
     g.queue.clear();
+    if (g.profileSession) CopyGameSettings(g.st, g.globalImageDefaults);
+    g.profileSession = false;
+    g.gameExecutable.clear();
+    g.panel.SetProfileStatus("No active game profile. Global image defaults restored.");
     g.running = false;
     g.genActive = false;
     SLOG("Session stopped: %s", ToUtf8(why).c_str());
@@ -142,7 +186,7 @@ void StartSession(HWND target) {
     if (target) GetClassNameW(target, cls, 64);
     const bool bad = !target || !IsWindow(target) || !IsWindowVisible(target) || target == g.main ||
                      !wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW") || !wcscmp(cls, L"Shell_TrayWnd") ||
-                     !wcscmp(cls, L"SuperiorOverlay");
+                     !wcscmp(cls, L"SuperiorOverlay") || !wcscmp(cls, L"SuperiorPanel");
     if (bad) {
         Notify(L"Superior", T(L"Click the game window first, then start again.", L"اضغط على نافذة اللعبة أولاً ثم ابدأ مجدداً."));
         return;
@@ -151,7 +195,7 @@ void StartSession(HWND target) {
         HMONITOR mon = MonitorFromWindow(target, MONITOR_DEFAULTTONEAREST);
         MONITORINFOEXW mi{};
         mi.cbSize = sizeof mi;
-        GetMonitorInfoW(mon, &mi);
+        if (!GetMonitorInfoW(mon, &mi)) throw std::runtime_error("Monitor information unavailable");
         const int x = mi.rcMonitor.left, y = mi.rcMonitor.top;
         const UINT w = static_cast<UINT>(mi.rcMonitor.right - mi.rcMonitor.left);
         const UINT h = static_cast<UINT>(mi.rcMonitor.bottom - mi.rcMonitor.top);
@@ -173,12 +217,19 @@ void StartSession(HWND target) {
 
         g.gfx.CreateOutput(g.overlay, w, h);
         std::string err;
-        if (!g.cap.Start(target, g.gfx.Device(), g.frameEvent, err)) {
+        if (!g.cap.Start(target, g.gfx.Device(), g.frameEvent.Get(), err)) {
             throw std::runtime_error("Capture failed: " + err);
         }
         g.target = target;
         g.running = true;
         g.paused = false;
+        g.gameExecutable = ExecutableForWindow(target);
+        g.profileSession = g.st.autoProfiles && !g.gameExecutable.empty();
+        g.globalImageDefaults = g.st;
+        if (g.profileSession) {
+            const bool loaded = LoadGameProfile(std::filesystem::path(g.dir) / L"profiles", g.gameExecutable, g.st);
+            g.panel.SetProfileStatus(std::string(loaded ? "Loaded game profile: " : "New game profile (saved on image edits): ") + g.gameExecutable);
+        } else g.panel.SetProfileStatus(g.st.autoProfiles ? "Cannot identify target executable; using global settings" : "Profiles disabled for this session");
         g.queue.clear();
         g.ema.Reset();
         g.lastFrameMs = 0.0;
@@ -330,6 +381,8 @@ LRESULT CALLBACK MainProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             }
             return 0;
         case WM_CLOSE:
+            KillTimer(h, kStartTimer);
+            g.hotkeys.Clear();
             StopSession(L"");
             DestroyWindow(h);
             return 0;
@@ -354,19 +407,42 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     }
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-    HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Superior.SingleInstance");
+    UniqueHandle mutex(CreateMutexW(nullptr, TRUE, L"Superior.SingleInstance"));
+    if (!mutex) { MessageBoxW(nullptr, L"Could not create single-instance guard.", L"Superior", MB_ICONERROR); return 1; }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBoxW(nullptr, L"Superior is already running (see the tray icon).", L"Superior", MB_ICONINFORMATION);
         return 0;
     }
 
-    wchar_t path[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    g.dir = path;
-    g.dir.resize(g.dir.find_last_of(L'\\') + 1);
-    Log::Open(ToUtf8(g.dir + L"superior.log"));
-    g.settingsPath = ToUtf8(g.dir + L"settings.json");
-    LoadSettings(g.settingsPath, g.st);
+    try {
+        std::vector<wchar_t> path(32768);
+        const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+        if (!length || length >= path.size()) throw std::runtime_error("Executable path unavailable");
+        auto directory = std::filesystem::path(std::wstring(path.data(), length)).parent_path();
+        auto probe = directory / L".superior-write-probe";
+        if (!WriteTextAtomic(probe, "write check")) {
+            std::vector<wchar_t> local(32768);
+            const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", local.data(), static_cast<DWORD>(local.size()));
+            if (!count || count >= local.size()) throw std::runtime_error("No writable settings location");
+            directory = std::filesystem::path(std::wstring(local.data(), count)) / L"Superior";
+            std::filesystem::create_directories(directory);
+            probe = directory / L".superior-write-probe";
+            if (!WriteTextAtomic(probe, "write check")) throw std::runtime_error("Settings location is not writable");
+        }
+        std::error_code error;
+        std::filesystem::remove(probe, error);
+        g.dir = directory.wstring() + L"\\";
+        if (!Log::Open(ToUtf8(g.dir + L"superior.log"))) throw std::runtime_error("Log file cannot be opened");
+        g.settingsPath = ToUtf8(g.dir + L"settings.json");
+        if (!LoadSettings(g.settingsPath, g.st)) {
+            if (std::filesystem::exists(std::filesystem::path(g.dir) / L"settings.json"))
+                MessageBoxW(nullptr, L"Settings could not be loaded. Defaults will be used. Check superior.log before saving changes.", L"Superior", MB_ICONWARNING);
+            SLOG("Using default settings (no valid settings file)");
+        }
+    } catch (const std::exception& e) {
+        MessageBoxA(nullptr, e.what(), "Superior: storage error", MB_ICONERROR);
+        return 1;
+    }
     SLOG("Superior starting");
 
     // Be polite to the game: below-normal CPU priority.
@@ -377,7 +453,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         winrt::init_apartment();
         g.gfx.InitDevice();
         g.monitor.Init(g.gfx.Device());
-        g.panel.Open(inst, g.gfx.Device(), &g.st, SaveAndRefresh);
+        g.panel.Open(inst, g.gfx.Device(), &g.st, SaveAndRefresh, ApplyShortcuts);
+    } catch (const winrt::hresult_error& e) {
+        SERR("WinRT init failed (0x%08X)", static_cast<unsigned>(e.code().value));
+        MessageBoxW(nullptr, e.message().c_str(), L"Superior: Windows runtime error", MB_ICONERROR);
+        g.panel.Close();
+        return 1;
     } catch (const std::exception& e) {
         SERR("Init failed: %s", e.what());
         const std::string msg = std::string("Superior could not start:\n") + e.what() + "\n\nSee superior.log";
@@ -386,21 +467,37 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         return 1;
     }
 
-    g.frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    g.frameEvent.Reset(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+    if (!g.frameEvent) {
+        MessageBoxW(nullptr, L"Could not create capture event.", L"Superior", MB_ICONERROR);
+        g.panel.Close();
+        return 1;
+    }
 
     WNDCLASSEXW wc{sizeof wc};
     wc.lpfnWndProc = MainProc;
     wc.hInstance = inst;
     wc.lpszClassName = L"SuperiorMain";
-    RegisterClassExW(&wc);
+    if (!RegisterClassExW(&wc)) {
+        SERR("Main window class failed (%lu)", GetLastError());
+        g.panel.Close(); return 1;
+    }
     WNDCLASSEXW oc{sizeof oc};
     oc.lpfnWndProc = OverlayProc;
     oc.hInstance = inst;
     oc.lpszClassName = L"SuperiorOverlay";
     oc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    RegisterClassExW(&oc);
+    if (!RegisterClassExW(&oc)) {
+        SERR("Overlay window class failed (%lu)", GetLastError());
+        g.panel.Close(); return 1;
+    }
 
     g.main = CreateWindowExW(0, L"SuperiorMain", L"Superior", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, inst, nullptr);
+
+    if (!g.main) {
+        MessageBoxW(nullptr, L"Could not create the session control window.", L"Superior", MB_ICONERROR);
+        g.panel.Close(); return 1;
+    }
 
     g.nid.cbSize = sizeof g.nid;
     g.nid.hWnd = g.main;
@@ -408,24 +505,29 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     g.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g.nid.uCallbackMessage = WM_TRAY;
     g.nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    Shell_NotifyIconW(NIM_ADD, &g.nid);
+    if (!Shell_NotifyIconW(NIM_ADD, &g.nid)) {
+        MessageBoxW(nullptr, L"Could not create tray icon. Superior will exit to avoid leaving an inaccessible process.", L"Superior", MB_ICONERROR);
+        DestroyWindow(g.main); g.panel.Close(); return 1;
+    }
     UpdateTip();
 
-    const UINT mod = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
-    struct { int id; UINT vk; } keys[] = {{HK_START, 'S'},     {HK_OLED, 'O'},        {HK_FG, 'G'},         {HK_OLED_UP, VK_UP},
-                                          {HK_OLED_DOWN, VK_DOWN}, {HK_SHARP_UP, VK_RIGHT}, {HK_SHARP_DOWN, VK_LEFT}, {HK_LANG, 'L'},
-                                          {HK_QUIT, 'Q'}, {HK_AA, 'A'}, {HK_VIB_UP, VK_PRIOR}, {HK_VIB_DOWN, VK_NEXT}};
-    for (auto& k : keys) {
-        if (!RegisterHotKey(g.main, k.id, mod, k.vk)) SERR("RegisterHotKey %d failed (%lu)", k.id, GetLastError());
-    }
-    Notify(L"Superior", T(L"Ready. Ctrl+Alt+S starts/stops on the game window.", L"جاهز. Ctrl+Alt+S للتشغيل/الإيقاف على نافذة اللعبة."));
+    std::string hotkeyError;
+    if (!g.hotkeys.Apply(g.main, g.st.hotkeys, hotkeyError)) {
+        SERR("Hotkeys: %s", hotkeyError.c_str());
+        Notify(L"Superior", L"Shortcuts unavailable. Use the tray menu and edit shortcuts in Control Center.");
+    } else Notify(L"Superior", T(L"Ready. Use your Start / stop shortcut on the game window.", L"جاهز. استخدم اختصار التشغيل على نافذة اللعبة."));
 
     bool quit = false;
     while (!quit) {
-        HANDLE handles[2] = {g.frameEvent, g.gfx.Waitable()};
+        HANDLE handles[2] = {g.frameEvent.Get(), g.gfx.Waitable()};
         DWORD n = 1;
         if (g.running && !g.queue.empty() && handles[1]) n = 2;
         const DWORD wake = MsgWaitForMultipleObjects(n, handles, FALSE, g.panel.Visible() ? 16 : g.running ? 100 : INFINITE, QS_ALLINPUT);
+        if (wake == WAIT_FAILED) {
+            SERR("Message wait failed (%lu)", GetLastError());
+            StopSession(L"");
+            exitCode = 1; break;
+        }
         const bool ready = n == 2 && wake == WAIT_OBJECT_0 + 1;
 
         MSG msg;
@@ -460,11 +562,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         }
     }
 
+    StopSession(L"");
     g.panel.Close();
-    for (const auto& k : keys) UnregisterHotKey(g.main, k.id);
-    SaveSettings(g.settingsPath, g.st);
+    g.hotkeys.Clear();
+    if (!SaveSettings(g.settingsPath, g.st)) SERR("Settings save failed on exit");
     SLOG("Superior exit");
-    CloseHandle(g.frameEvent);
-    if (mutex) CloseHandle(mutex);
+    Log::Close();
+    g.frameEvent.Reset();
     return exitCode;
 }

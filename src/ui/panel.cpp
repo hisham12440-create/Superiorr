@@ -1,5 +1,6 @@
 #include "panel.h"
 #include "filters/presets.h"
+#include "core/profiles.h"
 #include <stdexcept>
 #include "imgui.h"
 #include "backends/imgui_impl_win32.h"
@@ -16,8 +17,10 @@ LRESULT CALLBACK Panel::Proc(HWND window, UINT message, WPARAM w, LPARAM l) {
     if (message == WM_CLOSE) { ShowWindow(window, SW_HIDE); return 0; }
     return DefWindowProcW(window, message, w, l);
 }
-void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, std::function<void()> save) {
+void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, std::function<void()> save, ApplyHotkeys applyHotkeys) {
     settings_ = settings;
+    draftKeys_ = settings->hotkeys;
+    applyHotkeys_ = std::move(applyHotkeys);
     save_ = std::move(save);
     WNDCLASSEXW wc{sizeof wc};
     wc.hInstance = instance;
@@ -82,6 +85,9 @@ void Panel::Show() { if (window_) { ShowWindow(window_, SW_SHOW); SetForegroundW
 bool Panel::Visible() const { return window_ && IsWindowVisible(window_); }
 void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool safeMode) {
     if (!initialized_ || !Visible()) return;
+    const ULONGLONG now = GetTickCount64();
+    if (now - lastDrawMs_ < 33) return;
+    lastDrawMs_ = now;
     RECT client{};
     if (!GetClientRect(window_, &client) || IsIconic(window_) || client.right <= 0 || client.bottom <= 0) return;
     const UINT width = static_cast<UINT>(client.right), height = static_cast<UINT>(client.bottom);
@@ -109,7 +115,7 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
     ImGui::TextDisabled("DirectX 11  |  Capture only  |  Prototype");
     ImGui::Separator();
     ImGui::Text("SESSION   %s", !running ? "Ready" : paused ? "Paused - game not foreground" : "Capturing");
-    ImGui::TextWrapped("Click your borderless game, then press Ctrl+Alt+S to start or stop. Close this panel to keep Superior in the tray.");
+    ImGui::TextWrapped("Use your Start / stop shortcut on the borderless game, or tray > Start with a 3-second delay. Close this panel to keep Superior in the tray.");
     ImGui::SeparatorText("HARDWARE / EFFICIENCY");
     ImGui::TextWrapped("%s | %s | Tier %s", hw.adapter.c_str(), hw.vendor.c_str(), hardware::TierName(hw.tier));
     ImGui::Text("Dedicated %.0f MiB | Shared %.0f MiB", static_cast<double>(hw.dedicated) / hardware::MiB, static_cast<double>(hw.shared) / hardware::MiB);
@@ -121,6 +127,43 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
     ImGui::TextDisabled("Temperature / watts / clocks / ghost score: n/a");
     ImGui::TextWrapped("%s", hw.reason.c_str());
     bool changed = false;
+    if (ImGui::CollapsingHeader("GAME PROFILES")) {
+        changed |= ImGui::Checkbox("Load / save per-game image settings (next session)", &settings_->autoProfiles);
+        ImGui::TextWrapped("%s", profileStatus_.c_str());
+        ImGui::TextWrapped("Game profiles use the full executable path. While active, image edits save to that game; global image defaults are restored when capture stops.");
+    }
+    if (ImGui::CollapsingHeader("CUSTOM SHORTCUTS")) {
+        ImGui::TextWrapped("Choose a key and modifiers. Disabled removes the shortcut. Changes apply only when you press Apply. Windows may reject shortcuts already used by another app.");
+        for (size_t i = 0; i < draftKeys_.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::SeparatorText(kHotkeyNames[i]);
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::BeginCombo("Key", KeyName(draftKeys_[i].key).c_str())) {
+                for (uint32_t key = 0; key <= 255; ++key) {
+                    if (SupportedKey(key) && ImGui::Selectable(KeyName(key).c_str(), draftKeys_[i].key == key))
+                        draftKeys_[i].key = key;
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            int mods = static_cast<int>(draftKeys_[i].modifiers);
+            ImGui::CheckboxFlags("Ctrl", &mods, 2); ImGui::SameLine();
+            ImGui::CheckboxFlags("Alt", &mods, 1); ImGui::SameLine();
+            ImGui::CheckboxFlags("Shift", &mods, 4); ImGui::SameLine();
+            ImGui::CheckboxFlags("Win", &mods, 8);
+            draftKeys_[i].modifiers = static_cast<uint32_t>(mods);
+            ImGui::PopID();
+        }
+        ImGui::TextDisabled("F12 is reserved by Windows; at least one modifier is required.");
+        if (ImGui::Button("Apply shortcuts")) {
+            if (applyHotkeys_(draftKeys_, hotkeyStatus_)) hotkeyStatus_ = "Shortcuts applied";
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Edit default shortcuts")) draftKeys_ = DefaultHotkeys();
+        ImGui::SameLine();
+        if (ImGui::Button("Discard shortcut edits")) { draftKeys_ = settings_->hotkeys; hotkeyStatus_.clear(); }
+        ImGui::TextWrapped("%s", hotkeyStatus_.c_str());
+    }
     const char* modes[] = {"Comfort", "Balanced", "Max"};
     changed |= ImGui::Combo("Operating mode", &settings_->comfortMode, modes, 3);
     changed |= ImGui::Checkbox("Frame generation x2", &settings_->frameGen);
@@ -151,8 +194,7 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
     ImGui::TextWrapped("Frame generation requires a game cap near half your display refresh. GPU quality and latency are not yet validated on hardware.");
     if (ImGui::Button("Reset image settings")) {
         Settings defaults;
-        defaults.language = settings_->language;
-        *settings_ = defaults;
+        CopyGameSettings(*settings_, defaults);
         changed = true;
     }
     ImGui::SameLine();

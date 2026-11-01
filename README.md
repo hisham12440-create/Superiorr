@@ -1,371 +1,249 @@
-# Superior (v0.1 first prototype)
+# Superior — experimental Windows game enhancer
 
-Real-time game enhancer for Windows 10/11 (DirectX 11). Captures one game window (Windows.Graphics.Capture, no injection, no hooks, no admin) and shows an enhanced image in a click-through overlay.
+Superior captures a game window with Windows.Graphics.Capture, processes its
+image with DirectX 11 and displays it in a click-through borderless overlay.
+The blue/black control panel uses Dear ImGui. **This is a prototype, not a
+completed implementation of the proposed 13-stage roadmap.**
 
-الاستعمال / Usage
-1. Run the game in **Borderless/Windowed** mode, ideally at a lower resolution than your screen (e.g. 1280x720 or 1600x900 on a 1080p screen).
-2. Run `Superior.exe` (tray icon appears). Click the game window, then press **Ctrl+Alt+S** (or tray menu > Start, then click the game within 3 seconds).
-3. Press **Ctrl+Alt+S** again to stop.
+No injection, hooks, drivers or admin privileges are used. This is **not an
+anti-cheat compatibility certification**. No real-GPU image-quality, latency,
+startup-time, thermal or power-saving result has been measured here.
 
-| Hotkey | Action |
+## Download and run
+
+Open the successful **build** run for your branch under GitHub **Actions** and
+download **Artifacts → Superior**. Extract `Superior-portable.zip` and run
+`Superior.exe`. The zip contains this guide, a verifier manifest example, license
+notices and `SHA256SUMS.txt`. A checksum is not an Authenticode signature.
+
+1. Set the game to **Borderless/Windowed**, not Exclusive Fullscreen.
+2. Click the game, then press the default **Ctrl+Alt+S** to start/stop capture.
+   Alternatively select **Start** from the tray menu, then click the game within
+   three seconds. The no-frame warning recommends borderless mode; it does not
+   reliably distinguish exclusive fullscreen from blocked capture.
+3. Close the panel to keep Superior in the tray. Reopen it through **Superior
+   Control Center**. Use tray **Exit** or the Quit shortcut to terminate it.
+4. The overlay hides while the target is minimized or not foreground. Opening
+   Control Center therefore pauses its visible output. Closing the game stops
+   capture. Monitor/DPI changes during a session still require stop/restart.
+
+The panel exposes AA, sharpening, vibrance, contrast, saturation, brightness,
+gamma, OLED emulation, image presets and before/after split preview. Colour
+controls are fused into the final pixel pass; the entire pipeline has **not**
+been converted into one compute pass. Presets are aesthetic parameter sets,
+not measured quality rankings. The left split is the current real source with
+bilinear scaling, not a synchronized quality/latency reference. Adjustments on
+a paused capture appear with the next captured/presented frame.
+
+**OLED is an emulation: an LCD cannot produce real OLED blacks.** It provides
+local contrast, a smooth black-crush/S-curve and saturation/specular adjustments.
+CPU tests cover the scalar reference curve, not every property of the RGB shader.
+
+## Language and shortcuts
+
+Select **Language** in the panel, or use Ctrl+Alt+L by default. Arabic labels use
+Windows GDI `DrawTextW` complex-script shaping/bidi with the installed Segoe UI
+font. Text aligns right and Arabic labels sit above sliders/combo controls. Text
+is not manually reversed. This is a custom RTL label/layout layer, **not a fully
+mirrored native ImGui backend**. Technical key names, paths, vendor names, window
+title and some OS error details retain English/Latin forms. Mixed-direction
+paths, diacritics, fallback fonts and high-DPI appearance need manual validation.
+No Arabic font is downloaded or redistributed. UI text textures are unrelated
+to game-frame readback. Their cache is limited to 256 entries / approximately
+64 MiB between insertions and retained until the current UI frame is submitted.
+
+| Default shortcut | Action |
 |---|---|
-| Ctrl+Alt+S | Start/stop on the foreground window |
-| Ctrl+Alt+G | Frame generation on/off |
-| Ctrl+Alt+O | OLED mode: Off / Light / Medium / Strong |
+| Ctrl+Alt+S | Start / stop |
+| Ctrl+Alt+G | Toggle frame generation |
+| Ctrl+Alt+O | Cycle OLED Off / Light / Medium / Strong |
 | Ctrl+Alt+Up / Down | OLED intensity |
 | Ctrl+Alt+Right / Left | Sharpness |
-| Ctrl+Alt+A | Anti-aliasing on/off |
-| Ctrl+Alt+PageUp / PageDown | Vibrance (colour richness) |
-| Ctrl+Alt+L | Arabic / English (tray menu) |
+| Ctrl+Alt+A | Toggle anti-aliasing |
+| Ctrl+Alt+PageUp / PageDown | Vibrance |
+| Ctrl+Alt+L | Language |
 | Ctrl+Alt+Q | Quit |
 
-Settings are saved in `settings.json` next to the exe; the log is `superior.log`.
+**CUSTOM SHORTCUTS** edits all 12 actions. Choose a key and Ctrl/Alt/Shift/Win,
+or Disabled. At least one modifier is required; Windows reserves F12. Apply
+validates duplicates before registration. If another app owns a combination,
+Superior attempts to restore the old set and reports errors. If restoration
+also fails, use the tray menu. Editing is a draft until **Apply shortcuts**.
 
-## What is implemented
-- Window capture on the GPU, overlay with flip-model waitable swap chain, tray icon, hotkeys, Arabic/English tray menu.
-- Image pipeline (3 GPU passes, FP16 intermediate, dithered output):
-  1. edge-directed anti-aliasing at source resolution (FXAA-style, optional);
-  2. edge-adaptive Lanczos upscale in approximate linear light: 4x4 taps, kernel stretched along edges using a luma structure tensor, de-ringing clamp;
-  3. contrast-adaptive sharpening (no halos), vibrance with skin-tone protection, OLED emulation, triangular dither.
-- Frame generation x2: block-matching motion search (compute shader), per-pixel confidence (color consistency, flow disagreement, match error, fast-motion guard). Low confidence falls back to a plain cross-fade. Scene cuts and duplicate frames are detected and skipped.
-- Picks the GPU with the most VRAM (the NVIDIA GPU on a hybrid laptop).
+## Settings, game profiles and safety
 
-## Honest limits
-- **No ghosting guarantee.** The confidence check reduces ghosting a lot, but "100% ghost-free" cannot be promised for every game. Not measured yet.
-- Frame generation only runs when the display refresh is about 2x the game FPS (30 on 60 Hz, 72 on 144 Hz). Cap the game to half your refresh rate.
-- No game motion vectors/depth, so this is not a DLSS equivalent. No neural upscaling yet.
-- An LCD cannot produce real OLED blacks: OLED mode is a contrast/black-crush emulation.
-- Exclusive fullscreen games cannot be captured; use Borderless.
-- No ImGui window yet (tray menu + hotkeys only). Hotkeys are fixed.
-- **Not yet tested on a real GPU.** Only CPU logic is unit-tested in CI.
+Settings, `profiles/` and rotating `superior.log` live beside the exe if writable,
+otherwise under `%LOCALAPPDATA%\Superior`. This is not automatic migration
+between locations. Windows Unicode paths are supported. Reads are size-limited;
+settings/profile replacement is atomic and failed replacement cleans its temp
+file. Saves use the UI thread; concurrent multi-process writes are unsupported.
+The normal log flushes each line but is **not a crash dump or a guarantee
+against power-failure data loss**.
 
-## Build
-GitHub Actions builds on every push: open **Actions > latest run > Artifacts > Superior** and download `Superior.exe`.
+**GAME PROFILES** identifies the target through limited process-query rights,
+normalizes its full executable path, and loads a versioned profile. Games with
+the same executable name in different folders stay separate. The path is stored
+locally, never uploaded. Protected processes may deny identification; global
+settings are used instead. This does not identify the GPU rendering the game.
 
-## Control Center (foundation update)
+While a game profile is active, image/AA/generation/mode edits save for that game;
+global image defaults return when capture stops. Language, shortcuts, split
+preview and the profiles toggle stay global. The toggle applies next session.
+Missing/invalid profiles leave current defaults unchanged; edits may replace them.
+The stable hash is a filename mechanism, not a cryptographic/security guarantee.
+There is no game launcher or auto-start integration yet.
 
-Superior now opens a Dear ImGui control panel with a blue/black theme. Adjust
-anti-aliasing, sharpening, vibrance, frame generation and OLED emulation live.
-Close the window or choose **Hide to tray** to keep the process running; reopen
-it with **Superior Control Center** in the tray menu. Use the tray **Exit** or
-Ctrl+Alt+Q to quit. The overlay hides while the target is minimized or not the
-foreground window. The panel itself pauses capture display while focused.
+Run `Superior.exe --safe` to disable interpolation regardless of hotkeys/saved
+preferences. Spatial processing remains available; the panel shows a banner.
+Event/process/single-instance handles use RAII. Startup checks report event,
+class, control-window and tray failures; failed waits exit rather than spin.
+Automatic crash recovery, local crash dumps and device-loss reinitialization are
+not implemented. The app never changes game caps or system settings.
 
-### Architecture and data flow
+## Hardware, Comfort and interpolation
 
-```text
-Windows.Graphics.Capture -> GPU source textures -> flow / midpoint
-  -> AA -> spatial upscale -> sharpen / colour / OLED -> waitable presentation
-core/ : JSON settings, rotating log, pacing and monotonic timing
-app/  : WinRT capture, DirectX renderer, tray / session orchestration
-ui/   : Dear ImGui Win32 + DX11 Control Center
-```
+The panel reports selected GPU/vendor, dedicated/shared memory and a **heuristic**
+VRAM tier. Device selection still prefers most dedicated VRAM, not the game's
+adapter. DXGI local-segment **process** usage/budget is polled every second.
+Additional allowance is `min(tier cap, budget - usage - 400 MiB)`, saturated at
+zero. It is not a measurement of all allocations made by the game. Optional
+interpolation stops on battery/power saver, allowance below 32 MiB, safe mode or
+timing backoff. Pool shrinking, calibrated caps and hybrid routing are absent.
 
-Builds use GitHub Actions only: push the working branch, open its **build** run,
-wait for all checks, and download the **Superior** artifact. The zip contains
-the portable executable and README. No local compilation is required. The
-Windows app uses C++20 for C++/WinRT; portable core logic uses C++17. Static CRT
-is enabled. Application shaders are compiled by fxc during the Windows build and embedded as
-bytecode. The Dear ImGui backend still compiles its own small UI shaders at startup.
+Comfort (default), Balanced and Max have provisional budgets of 25%, 40%, 65%
+of display interval. Asynchronous timestamp queries measure **separate work
+groups** (capture/flow, final rendering), not their total per output interval
+or end-to-end latency. The panel reports the largest completed group in the
+latest poll. This is **not verified enforcement of a total 25% GPU target**.
+Overrun disables interpolation; recovery waits for five seconds of sampled
+headroom. Incomplete queries use non-flushing checks and never block. No sample
+means `n/a`. Temperature, watts, clocks and ghost score remain unavailable.
+The panel redraws at approximately 30 Hz to reduce UI work.
 
-### Current scope and remaining foundation work
+The shader block matcher runs in both directions. It checks forward/backward
+consistency at the matched block, colour agreement, flow variance, boundary
+validity and matching error. Low confidence uses cross-fade; cuts/near-static
+pairs select the current real image on the GPU. **Cross-fade can show double
+edges.** Flow statistics never use synchronous CPU staging readback. Static
+regions still incur a flow dispatch; tile caching/work skipping is absent.
 
-This is a prototype foundation update, **not completion of the 13-stage plan**.
-No GPU performance, startup-time, quality or anti-cheat compatibility guarantee
-has been measured. Capture-only means no injection or hooks, not certification
-by anti-cheat vendors. Flow statistics now stay on the GPU (see the hardware/Comfort update below).
+Choose maximum x2, x3 or x4. Comfort caps at x2. Selection requires an integer
+capture-delivery/display-interval ratio within 0.15: 30/60 = x2, 40/120 = x3,
+30/120 = x4. A x4 ratio under Comfort falls back to real frames rather than
+forcing uneven x2 cadence. Capture delivery intervals are not internal game FPS.
 
-The Control Center currently uses English. The existing Arabic tray strings
-remain available via Ctrl+Alt+L, but **full Arabic UI, bidi/contextual shaping
-and font embedding are not implemented**. Hotkeys are still fixed, not user
-customizable. Monitor/DPI changes during capture require stopping and restarting.
-Exclusive fullscreen is not reliably distinguished from blocked/no-frame capture;
-the no-frame warning recommends borderless/windowed mode. The complete module
-split, robust device-loss recovery, game-aware hardware selection and full quality-per-millisecond governor are
-not implemented. No neural models or vendor runtimes ship with this build.
-Settings are saved beside the executable; use a writable folder. Settings writes
-now use a temporary file plus atomic replacement; write failures are reported.
+Phases 1/m, 2/m, ... are rendered just before presentation and use display-interval
+deadlines; the real frame is last. New captures replace old pending work to avoid
+stale textures, so overload/jitter can drop queued outputs. This bounds depth,
+but **does not prove perfect pacing, presented FPS or latency**. The matcher
+is still a 16x16 field, not hierarchical/subpixel flow or a full occlusion-aware
+compositor. Bidirectional GPU cost and x3/x4 quality need real laptop testing.
 
-### Manual Windows test checklist
-
-- Start from a writable folder, confirm blue/black panel and tray icon.
-- Change settings, exit, restart and confirm persistence.
-- Start capture on a borderless game with Ctrl+Alt+S; stop and repeat 20 times.
-- Verify live sliders, AA toggle and OLED modes; check for blank/frozen output.
-- Alt-Tab and minimize the game: overlay must disappear, resume on return.
-- Resize the game, then close it; report artifacts or capture failure.
-- Try 30 FPS on 60 Hz and 60 FPS on 120 Hz; report pacing and ghosting honestly.
-- Repeat on Intel/AMD/NVIDIA hardware and hybrid laptops where available.
-- Check `superior.log` after failures. Arabic-path logging remains a known gap.
-
-## Hardware / Comfort update
-
-The control panel now displays the selected adapter/vendor, dedicated/shared
-memory and heuristic memory tier. DXGI local-segment **process** usage and budget
-are polled once per second with a 400 MiB safety margin; this is not a claim to
-measure the game's complete allocation or system-wide free VRAM. Optional
-interpolation backs off when extra allowance falls below 32 MiB or the system
-reports battery / power saver. No system settings or game caps are changed.
-
-Comfort (default), Balanced and Max are saved in settings. Their provisional
-budgets are 25%, 40%, 65% of the display interval. Asynchronous D3D11 timestamp
-queries measure separate capture/flow and final-render groups (not the sum of
-all work per output interval, and not end-to-end latency). The panel reports the
-largest completed group in the latest poll; this is **not enforcement of a total
-25% GPU target**. Optional interpolation drops immediately on a measured overrun
-and recovers only after five seconds of stable sampled headroom. No completed
-query means `n/a`, not zero. Temperature, watts, clocks and ghost score remain
-`n/a`; there is no thermal prediction without a temperature source.
-
-Flow scene-cut/static counters now stay on the GPU. The midpoint shader reads
-them directly and selects the current real image on cuts/near-static pairs.
-The old synchronous staging-buffer readback has been removed. Timestamp queries
-use non-flushing readiness checks and never wait for unavailable measurements.
-This does not implement tile-level caching or eliminate the flow dispatch on
-static frames. Capture resize now drops the old surface before pool recreation.
-
-The artifact includes SHA256SUMS.txt for Superior.exe. This is an integrity
-checksum, not an Authenticode signature. These changes still require laptop
-validation: compare plugged-in vs battery behavior, inspect the measured GPU
-group time, resize capture repeatedly and test scene cuts / small HUD updates.
-
-### Status of the requested roadmap
-
-| Area | Current implementation | Not yet implemented / verified |
-|---|---|---|
-| Foundation | WinRT GPU capture, tray, blue/black ImGui, settings, CPU timing tests | Full Arabic shaping/RTL, configurable hotkeys, device-loss recovery |
-| Hardware | Adapter identity, heuristic VRAM tier, DXGI budget, battery policy | Game-render adapter detection, hybrid routing, pools, calibration, NVML/ADLX |
-| Comfort | Mode budgets, asynchronous group timing, interpolation backoff | Measured Pareto quality selection, tiles, thermal prediction |
-| Upscale | Spatial edge-adaptive upscale, sharpening, FP16 intermediate | Temporal/neural SR, history, licensed model integration |
-| Frame generation | Shader block matching, x2 midpoint, GPU cut/static fallback | Bidirectional/hierarchical flow, x3/x4, HUD masks, runtime ghost validation |
-| Filters | AA, sharpening, vibrance, OLED emulation | LUTs, full filter set, fused compute conversion, per-game presets |
-| Benchmark | CPU logic tests only | Clip recorder, real ground truth, measured 99% pass rate, exports |
-| Distribution | Windows CI portable exe/zip, SHA256 | Installer, release tags workflow, signing, safe mode |
-
-A green build validates compilation and CPU tests, not real GPU quality. None of
-the unimplemented features in this table is represented by a placeholder result.
-
-## Colour controls and safe startup
-
-Contrast (0.5–2), saturation (0–2), brightness (-0.25–0.25), and gamma (0.5–2)
-now run inside the existing final pixel-shader pass, after OLED processing and
-before dither. They are saved with the other settings. This is pass fusion, not
-a conversion of the entire pipeline to a compute shader. Presets **Clean,
-Vivid, Cinematic, Competitive, OLED** apply explicit colour/sharpness parameters;
-these are aesthetic choices, not measured quality rankings. Presets do not
-change the operating mode, language or generation preference.
-
-**Before / after split** shows the current real frame with basic bilinear scaling
-on the left and the enhanced pipeline on the right (including a generated frame
-if selected). It is a visual comparison, not a synchronized quality metric or
-latency benchmark. On a static paused capture, adjustments become visible with
-the next captured/presented frame. The control window is resizable and scrolls
-on small displays.
-
-Launch `Superior.exe --safe` to force interpolation off regardless of the saved
-setting or hotkey. Spatial upscale and image filters remain available. The panel
-shows a safe-mode banner. This does not implement automatic crash recovery or
-a neural-runtime loader. Capture history is invalidated when focus changes so
-old frames are not interpolated into a resumed session.
-
-The earlier roadmap table's filter/distribution rows are superseded only by
-these colour controls, presets, split preview and safe-mode additions. LUTs,
-per-game profiles, learned models, full RTL and the 99% validation corpus are
-still absent. No real-GPU pass rate or watt-saving number is available.
-
-## Custom shortcuts, game profiles and writable storage
-
-**CUSTOM SHORTCUTS** in Control Center edits all 12 global actions using a key
-selector and Ctrl/Alt/Shift/Win toggles. Choose Disabled to remove an action.
-At least one modifier is required. F12 is excluded because Windows reserves it.
-The editor is a draft until **Apply shortcuts** is pressed. Duplicate or invalid
-bindings are rejected before touching the active set. If Windows rejects a
-registration (for example another app owns it), Superior attempts to restore the
-old set and displays the failure; if restoration also fails, use the tray menu.
-The default shortcuts in the usage table are defaults, not fixed bindings.
-
-**GAME PROFILES** enables automatic image-profile loading when capture starts.
-The target executable is queried with limited process information rights, without
-admin privileges or injection. Its normalized full path identifies the profile,
-so two executables with the same name in different folders remain separate.
-The full executable path is stored locally in the profile; it is never uploaded.
-Protected processes may deny the query; Superior reports that condition and uses
-global settings without creating a game profile. This identification does not
-identify which GPU renders the game.
-
-While a game profile is active, edits to colour, OLED, AA, frame generation and
-operating mode save to `profiles/<stable-key>.json`. Global image defaults return
-when capture stops. Language, shortcuts, split preview and the profiles toggle
-stay global. The toggle applies to the **next** session. Missing/invalid profiles
-leave current image defaults unchanged; edits can then create a replacement.
-Profile files have a schema version and verify the stored executable identity
-before applying any settings. Profile hashing is a filename mechanism, not a
-security or cryptographic guarantee. There is no auto-start/game launcher yet.
-
-Superior first checks whether it can write beside its executable. If not, it
-uses `%LOCALAPPDATA%\Superior`. Settings, profiles and logs all use that selected
-location. This is a storage fallback, not automatic migration between locations.
-Windows Unicode paths are used for settings, profiles **and rotating logs**.
-Settings/profile files are size-limited on read and replaced atomically; failed
-replacement cleans its temporary file. Saves occur on the UI thread and are not
-intended for concurrent multi-process writers.
-
-The control panel redraw is capped at roughly 30 Hz to avoid unnecessary UI GPU
-work. Resuming a game still invalidates interpolation history. Capture-event,
-process-query and single-instance handles now have RAII ownership. Startup
-checks for event, window class, control-window and tray creation failures; it
-exits rather than leaving an invisible app with no tray controls. Failed message
-waits exit instead of spinning. WinRT initialization errors have a visible
-Windows error dialog. The ordinary log flushes each line but is **not a crash
-dump or a guarantee against data loss on power failure**.
-
-### Verification for this update
-
-CPU tests cover key validation/duplicates and JSON round trips, per-game profile
-isolation, corrupt/mismatched profile rejection, preservation of global
-preferences, bounded file reads, atomic replacement and failed-replacement
-cleanup, Unicode settings filenames and Unicode log rotation. Windows hotkey
-registration, permissions fallback and game integration require manual testing:
-
-1. Change Start/stop to Ctrl+Shift+F2, apply, restart, and test on a game.
-2. Try a duplicate binding: the editor must reject it without changing shortcuts.
-3. Occupy a shortcut in another app and confirm the error and rollback behavior.
-4. Save different image settings for two games; verify restore when switching.
-5. Stop capture and verify global image defaults return; language/hotkeys stay.
-6. Run from an Arabic-named directory, check saved settings and `superior.log`.
-7. Run from a nonwritable directory, verify files under LocalAppData\Superior.
-8. Verify slider edits during a game profile do not overwrite global image defaults.
-
-The roadmap's earlier statements about fixed shortcuts, absent per-game image
-profiles and Arabic-path logging are superseded by this section. Full shaped
-Arabic/RTL UI, neural SR, bidirectional flow, real quality benchmarking and the
-99% validation target remain unfinished and unmeasured.
-
-## Arabic rendering, bidirectional interpolation and offline evaluation
-
-### Arabic / English
-
-Choose **Language** in Control Center (or the tray language shortcut). Arabic
-labels are rendered into a bounded UI texture cache through Windows GDI
-`DrawTextW` complex-script shaping and bidi, using the installed Segoe UI font.
-Text/paragraphs align right; Arabic labels sit above numeric sliders and combo
-controls. The original Unicode strings are not reversed. Numeric values,
-Ctrl/Alt/Shift/Win names, file paths and vendor/model names retain their native
-forms. No externally downloaded font is required. The image textures belong to
-the settings UI only; this is not readback of captured game frames.
-
-This is a custom RTL label/layout layer, not a native mirrored ImGui backend.
-Mixed-direction paths, Arabic diacritics, font fallback and high-DPI layout need
-manual Windows verification. OS error details can remain English. The underlying
-Windows window title and some technical terms are unchanged. Texture cache is
-capped at 256 entries / approximately 64 MiB between insertions, and current-frame
-references remain alive through rendering. No screenshot-based localization
-verification has been performed in CI.
-
-### Bidirectional x2 / x3 / x4 (experimental)
-
-The existing shader block matcher now runs in **both** directions. Interpolation
-checks forward/backward consistency at the matched block location, boundary
-validity, colour disagreement, local flow variance and matching error. Failed
-confidence returns to cross-fade; scene cuts/near-static pairs use the current
-real image. Cross-fade itself can show double edges; this is not ghost-free.
-This is still a 16x16 block field, not a hierarchical/subpixel optical-flow engine
-or a full occlusion-aware compositor.
-
-Select a maximum multiplier from 2 through 4. Comfort caps at 2; battery, safe mode,
-memory pressure and timing backoff can disable generation. Multipliers are chosen
-only near an integer ratio of capture-delivery interval to display interval
-(within 0.15). Examples: 30 to 60 Hz = x2, 40 to 120 Hz = x3, 30 to 120 Hz = x4.
-A x4 ratio under Comfort falls back to real frames instead of forcing an uneven
-x2 cadence. The timing samples are delivery times, not the game's internal FPS.
-
-Generated phases are rendered just before presentation at 1/m, 2/m, ... and
-separated by display-interval deadlines. The real frame is last. A newly captured
-pair replaces pending work from an older pair to keep textures/history consistent;
-under jitter or overload pending outputs can be dropped. This bounds queue depth,
-but **does not prove perfect pacing**, presented FPS or latency. Bidirectional
-search costs more GPU time and is unmeasured on actual laptops.
-
-### Ground-truth quality evaluation
-
-The same portable EXE supports a CPU-only offline command (no GPU initialization):
+## Offline reference verification — the 99% target
 
 ```text
 Superior.exe --verify manifest.json report.json
 ```
 
-Use `docs/verification-manifest.example.json` as the manifest shape. Supply
-8-bit normalized grayscale PGM images (P5 binary or P2 ASCII) for each actual
-reference middle frame, generated candidate and two source frames. Relative image
-paths resolve beside the manifest. Limits: 8192x8192 per image, 10,000 frame records,
-8 MiB manifest. A JSON report and `report.json.txt` are written. Exit codes:
-0 = dataset target met; 2 = evaluated but target missed; 1 = invalid input/error.
+See `docs/verification-manifest.example.json`. Supply P5/P2 **8-bit grayscale PGM**
+files for a real reference middle frame, generated candidate and two sources.
+Relative paths resolve beside the manifest. Limits: 8192x8192/image, 10,000
+records, 8 MiB manifest. JSON and `report.json.txt` contain actual computations:
 
-Metrics are real computations on the supplied images:
-- PSNR on normalized luma; exact matches use JSON null plus `exact_match: true`
-  to represent infinite PSNR without invalid JSON.
-- SSIM using non-overlapping 8x8 box windows, population variance, L=1,
-  K1=.01 and K2=.03 (not Gaussian-window SSIM).
+- PSNR on normalized luma; exact matches use JSON null + `exact_match: true`
+  to represent infinity without invalid JSON.
+- SSIM: non-overlapping 8x8 box windows, population variance, L=1, K1=.01, K2=.03;
+  **not Gaussian-window SSIM**.
 - Mean absolute difference of normalized Sobel edge magnitude.
-- Source-edge/photometric disagreement coverage, explicitly a **ghosting proxy**.
-  Real motion/disocclusions can trigger it even in a correct frame.
+- Source-edge/photometric disagreement coverage: a **ghosting proxy** that can
+  flag correct motion/disocclusion, not ground-truth ghost labels.
 
-Default pass rule: SSIM >= .95, edge error <= .05, proxy coverage <= 1%.
-The target is 99% of supplied records passing. Thresholds and target are
-configurable. This command **does not create generated frames, record gameplay or
-validate the live shader**. Metrics tests verify formulas/reference cases, not
-99% quality of interpolation. No real-game dataset result has been measured and
-the UI therefore shows `n/a`, never a fabricated live pass rate. Do not interpret
-a result on duplicate/static fixtures as performance on games.
+Defaults: SSIM >= .95, edge error <= .05, proxy coverage <= 1%. Target: at least
+99% of supplied records pass. Thresholds/target are configurable. Exit codes:
+0 = dataset target met; 2 = evaluated but target missed; 1 = invalid input/error.
+Outputs cannot overwrite the manifest or input images.
 
-### Optional offline neural SR / DirectML
+The evaluator **does not record gameplay, generate candidate frames or test the
+live shader**. Identical-image fixtures only test metric correctness. No real-game
+pass rate has been measured. The UI honestly shows `n/a`; no runtime validator,
+safety-net pass-rate loop or claim of achieving 99% has been implemented.
+
+## Optional offline neural SR — not live neural upscale
 
 ```text
 Superior.exe --neural input.pgm output.pgm model.onnx
 ```
 
-This is a real optional ONNX Runtime DirectML inference path for **offline luma
-images**, not a live neural checkbox. Put a trusted DirectML-enabled ONNX Runtime
-1.20.1-compatible `onnxruntime.dll` and its required DirectML/runtime dependencies
-inside `Superior/` next to the EXE. DLL resolution is restricted to that directory
-and Windows system directories. The live app never loads these DLLs and continues
-using spatial upscale when they are absent.
+Put trusted DirectML-enabled ONNX Runtime 1.20.1-compatible `onnxruntime.dll` and
+its required runtime/DirectML dependencies inside `Superior/` next to the exe.
+DLL lookup is restricted to that folder and Windows system directories. Normal
+live capture never loads these components and continues spatial processing when
+missing. No models or runtime binaries are bundled/downloaded automatically.
 
-Supply a model with one float32 NCHW `[1,1,H,W]` input and one same-aspect
-`[1,1,sH,sW]` output, scale 1–4. Input is limited to 1024x1024. Place its license
-text at `model.onnx.license.txt`. This is a required local record, **not automated
-license verification**. No model, model license rights, or runtime DLLs are bundled
-or downloaded automatically. ONNX Runtime's C API header is pinned by SHA256 at
-build time (MIT project: https://github.com/microsoft/onnxruntime).
+Supply a float32 NCHW luma model with one `[1,1,H,W]` input and one same-aspect
+1x..4x output. Input is limited to 1024x1024. Add its license record at
+`model.onnx.license.txt`: this is **not automated license verification** or a grant
+of model rights. Only trusted models/DLLs should be loaded. Output/report paths
+cannot overwrite input, model or license.
 
-The command disables ORT telemetry and CPU execution-provider fallback, uses
-sequential execution, and exports `output.pgm.report.json` with measured wall time
-for session creation and inference or an explicit error. These are not GPU-stage
-measurements or quality claims. Only trusted models/DLLs should be loaded.
-Offline tensors use CPU staging by design; **this path is never called from live
-capture**. Live zero-readback D3D11/D3D12 tensor interop, tiled neural SR, model
-license review, FP16/INT8 qualification and per-machine quality/performance gates
-remain unimplemented. Missing/incompatible optional components do not stop the
-normal app from starting.
+The actual DirectML inference command disables ORT telemetry and CPU EP fallback,
+uses sequential execution, and writes `output.pgm.report.json` with measured
+session/inference **wall times** or an explicit error. These are not GPU stage
+measurements or quality claims. No model inference has been verified in CI.
+Offline tensors use CPU staging **outside live capture**. Live zero-readback
+D3D11/D3D12 interop, tiled inference, reviewed model weights, FP16/INT8
+qualification and per-machine quality/performance gating remain unimplemented.
 
-### Required manual checks
+## Build, architecture and test scope
 
-- Switch Arabic/English repeatedly; inspect connected Arabic letters, lam-alef,
-  mixed Arabic/Latin paths, dropdowns, scrolling and scaling at 100/150/200% DPI.
-- Try x2 on 30/60, x3 on 40/120, x4 on 30/120; inspect fast motion, cuts and HUD.
-  Check Comfort, battery and safe-mode fallback. Record capture/present cadence.
-- Evaluate actual exported candidate/reference frame pairs with `--verify`.
-- Test `--neural` with missing dependencies, then a reviewed luma model on a DX12
-  machine. No neural model run has been verified by this repository's CPU CI.
+Builds run only in GitHub Actions: Windows x64 Release, CMake, MSVC static CRT
+`/MT`, fxc validation, CPU tests, offline CLI smoke tests, portable packaging.
+Core uses C++17; the app uses C++20 for C++/WinRT. Image-processing shader bytecode
+is compiled at build time and embedded. Dear ImGui still compiles its own small
+UI shaders at startup. Dependencies use FetchContent; the optional ORT C API
+header is pinned by SHA256. Notices are under `docs/licenses/` (MIT projects
+Dear ImGui, nlohmann/json, ONNX Runtime); optional binaries/models have separate
+redistribution requirements.
 
-This section supersedes earlier x2-only/Arabic-absent status text, but it does not
-mean all 13 requested stages are complete. Runtime per-generated-frame validation,
-corpus recording, live learned SR, layered/higher-order flow and a verified 99%
-pass rate are still missing. The application remains experimental.
+```text
+WGC GPU frames -> prev/current textures -> bidirectional block matching
+  -> scheduled phase warp / confidence fallback
+  -> AA -> spatial upscale (FP16 intermediate) -> colour/OLED/sharpen/dither
+  -> flip-model waitable presentation
+core/         config, files, hotkeys, profiles, log, timing/pacing
+hardware/     DXGI/power monitor and conservative policy
+interpolate/  CPU phase scheduling / selection
+benchmark/    offline PGM metrics and verification
+neural/       optional offline DirectML command
+ui/           blue/black ImGui + Windows Arabic text layer
+app/          capture, renderer, tray/session orchestration
+```
 
-The portable zip also includes the example verifier manifest under `docs/`.
-CI smoke-tests the built Windows EXE's `--verify` command on an identical-image
-metric fixture and its `--neural` missing-input failure path. These tests require
-no GPU and must not be read as model-inference or interpolation-quality results.
-Evaluator output paths are rejected if they would overwrite the manifest, source
-images, neural model or license record.
+40 CPU tests cover config, reference OLED curve, timing/pacing, budgets/governor,
+hotkey validation, Unicode storage/log rotation, profiles, phase scheduling,
+analytic metric cases, PGM handling and input preservation. CI also starts the
+Windows EXE's verifier on an identical-image fixture and checks the neural
+missing-input error path. **A green build is not GPU-quality validation.**
+
+## Manual acceptance checklist / remaining work
+
+- Test capture, game resize/close, stop/start repeatedly, Alt-Tab and minimize.
+- Try Arabic connected letters, lam-alef, diacritics, mixed paths and 100/150/200%
+  DPI; inspect all dropdowns, sliders and scrolling.
+- Apply a custom shortcut, restart, test conflicts and duplicate rejection.
+- Verify two games retain separate image profiles and global defaults return.
+- Run from an Arabic path and a nonwritable directory; inspect storage fallback.
+- Test x2 30/60, x3 40/120, x4 30/120 on NVIDIA/AMD/Intel/hybrid hardware. Inspect
+  fast motion, HUD and cuts; record dropped output/presentation cadence.
+- Test battery, Comfort and `--safe` behavior; do not infer watt savings.
+- Evaluate actual exported reference/candidate pairs; do not use static fixtures
+  as proof of interpolation quality.
+- Test optional offline inference on a DX12 machine with reviewed luma weights.
+
+Still missing: game-render adapter selection, pools/calibration, thermal/vendor
+telemetry, Pareto quality governor, temporal/neural **live** SR, hierarchical
+flow, occlusion-aware/layered/higher-order motion, HUD masks, LUTs/full filter set,
+recorder/runtime quality validator, installer/signing/release automation and
+measured 99% results. No game depth/motion vectors are available; **this is not a
+DLSS equivalent**. The overlay and optional components require real Windows/GPU
+acceptance testing before relying on them in daily play.

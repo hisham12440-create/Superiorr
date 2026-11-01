@@ -83,7 +83,7 @@ jobs:
           Copy-Item build\Release\Superior.exe dist\
           Copy-Item README.md dist\
           New-Item -ItemType Directory -Force dist\docs | Out-Null
-          Copy-Item docs\verification-manifest.example.json dist\docs\
+          Copy-Item docs\* dist\docs\ -Recurse
           $hash = (Get-FileHash dist\Superior.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  Superior.exe" | Set-Content dist\SHA256SUMS.txt
           Compress-Archive -Path dist\* -DestinationPath Superior-portable.zip

@@ -352,15 +352,43 @@ Readiness observations show the already-initialized DX11 UI, known/unknown DXGI 
 and safe-mode restriction. They do not probe WGC compatibility, certify anti-cheat
 acceptance or invent a benchmark. Device-loss recovery is still not implemented.
 
-**Preferences → Share image and session settings** exports/imports a version-1
+**Preferences → Share image and session settings** exports/imports a version-2
 `superior-settings` JSON bundle through native file pickers. Capture and offline work
 must be stopped. Import replaces image/session values (including split preview), but
 preserves language, key bindings and automatic-profile preference. Importing does not
 start capture. Export excludes these local preferences, paths and hardware identities.
 
-Imports require the complete known v1 field set and correct types; unknown fields,
+Imports require the complete known field set for their version (v1 or v2) and correct types; unknown fields,
 future versions, excessive nesting, malformed files and files above 64 KiB are rejected
 without changing settings. Numeric image ranges are clamped as in local settings.
 Exports use atomic replacement and the picker asks before overwriting. Local config
 JSON, session reports and verifier manifests are not interchangeable with bundles.
 This adds functionality, not filler; no 20–50 MB size claim is made.
+
+
+### Expansion 2: GPU 3D LUT looks
+
+Image filters now also includes an independent **3D LUT color looks** section:
+**Off / Warm / Cool / Muted / Monochrome**, an enable switch, a strength slider and
+a look-only reset. Image presets and the eight-filter reset preserve this section;
+the full Preferences reset restores it to Off. Selecting a look while its enable
+switch is off does not override the bypass.
+
+The four original SDR looks use 17×17×17 immutable RGBA32F 3D textures. Red varies
+fastest in upload memory; the final shader samples at texel-centre coordinates with
+trilinear filtering after existing filters/OLED and before dither. Four textures
+contain 314,432 bytes of texel payload (not total driver allocation). They are created
+once per device, not uploaded every frame. This adds one LUT sample when enabled;
+it introduces no additional render pass or CPU image readback. No performance gain
+or measured overhead is claimed. Original-side split preview bypasses the look.
+
+Look selection, bypass and strength persist globally and per game. Settings bundle
+exports are now **v2**; this build still accepts the complete v1 schema and migrates
+it with the look set to Off. Older builds cannot import v2. Missing/unknown fields
+remain errors rather than silently accepting a mismatched schema.
+
+CPU tests cover layout, trilinear identity, bounded values, blend/bypass, monochrome,
+configuration/profile persistence and v1 migration; shader compilation is checked
+in Windows CI. GPU/reference image equivalence and artistic appearance are **not**
+validated by these CPU tests. These are SDR artistic transforms, not HDR conversion,
+monitor calibration, external `.cube` importing, neural enhancement or temporal SR.

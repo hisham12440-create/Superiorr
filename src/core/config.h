@@ -19,6 +19,9 @@ struct Settings {
     bool vibranceEnabled = true;
     bool temperatureEnabled = true;
     float aaStrength = 1.0f;     // 0..1
+    bool colorLookEnabled = true;
+    int colorLook = 0;           // 0 off, 1 warm, 2 cool, 3 muted, 4 monochrome
+    float colorLookStrength = 1.0f;
     float temperature = 0.0f;    // -1 cool .. +1 warm (artistic, not Kelvin)
     float sharpness = 0.5f;        // 0..1
     bool frameGen = true;

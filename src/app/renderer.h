@@ -72,6 +72,8 @@ private:
     ComPtr<ID3D11PixelShader> psMid_, psAA_, psUp_, psFinal_;
     ComPtr<ID3D11ComputeShader> csFlow_;
     ComPtr<ID3D11SamplerState> sampler_;
+    // Immutable, device-lifetime LUTs; no per-frame upload or CPU image readback.
+    std::array<ComPtr<ID3D11ShaderResourceView>,4> colorLuts_;
     ComPtr<ID3D11Buffer> cbRender_, cbFlow_;
 
     ComPtr<IDXGISwapChain2> sc_;

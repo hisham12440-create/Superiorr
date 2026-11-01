@@ -775,7 +775,7 @@ TEST(Bundle, RoundTripPreservesLocalPreferencesAndCopiesAllPortableValues) {
 }
 TEST(Bundle, ExportContainsNoLocalIdentityOrShortcuts) {
     const auto root=nlohmann::json::parse(ExportSettingsBundle(Settings{}));
-    EXPECT_EQ(root.at("format"),"superior-settings"); EXPECT_EQ(root.at("version"),1);
+    EXPECT_EQ(root.at("format"),"superior-settings"); EXPECT_EQ(root.at("version"),2);
     const auto& settings=root.at("settings");
     EXPECT_FALSE(settings.contains("hotkeys")); EXPECT_FALSE(settings.contains("language"));
     EXPECT_FALSE(settings.contains("auto_profiles"));
@@ -785,7 +785,7 @@ TEST(Bundle, InvalidInputsNeverPartiallyMutateDestination) {
     const auto original=ToJson(destination);
     auto valid=nlohmann::json::parse(ExportSettingsBundle(Settings{}));
     std::vector<std::string> invalid={"", "[]", "{}", "{bad", std::string(65537,'x')};
-    auto v=valid; v["version"]=2; invalid.push_back(v.dump());
+    auto v=valid; v["version"]=3; invalid.push_back(v.dump());
     v=valid; v["version"]=1.5; invalid.push_back(v.dump());
     v=valid; v["settings"].erase("contrast"); invalid.push_back(v.dump());
     v=valid; v["settings"]["language"]="en"; invalid.push_back(v.dump());
@@ -833,4 +833,84 @@ TEST(Bundle, ExcessiveNestingIsRejectedWithoutMutation) {
     const std::string nested=std::string(2000,'[')+"0"+std::string(2000,']');
     EXPECT_FALSE(ImportSettingsBundle(nested,destination,error));
     EXPECT_EQ(ToJson(destination),before); EXPECT_FALSE(error.empty());
+}
+
+#include "filters/color_lut.h"
+TEST(ColorLut, IdentityTrilinearSamplingPreservesGridAndOffGridColors) {
+    const auto lut=filters::BuildLook(0);
+    for(int i=0;i<=200;++i) {
+        const filters::Rgb c{i/200.f,(200-i)/200.f,(i%37)/36.f};
+        const auto result=filters::SampleLook(lut,c,1);
+        EXPECT_NEAR(result.r,c.r,2e-6f); EXPECT_NEAR(result.g,c.g,2e-6f); EXPECT_NEAR(result.b,c.b,2e-6f);
+    }
+}
+TEST(ColorLut, GridLayoutIsRedFastestWithCorrectCorners) {
+    const auto lut=filters::BuildLook(0);
+    EXPECT_EQ(filters::LutIndex(1,0,0),1u);
+    EXPECT_EQ(filters::LutIndex(0,1,0),17u);
+    EXPECT_EQ(filters::LutIndex(0,0,1),289u);
+    EXPECT_FLOAT_EQ(lut.front().r,0); EXPECT_FLOAT_EQ(lut.front().g,0); EXPECT_FLOAT_EQ(lut.front().b,0);
+    EXPECT_FLOAT_EQ(lut.back().r,1); EXPECT_FLOAT_EQ(lut.back().g,1); EXPECT_FLOAT_EQ(lut.back().b,1);
+    EXPECT_FLOAT_EQ(lut[filters::LutIndex(16,0,0)].r,1);
+    EXPECT_FLOAT_EQ(lut[filters::LutIndex(16,0,0)].g,0);
+}
+TEST(ColorLut, EveryLookHasFiniteBoundedVoxelsAndMatchesItsGridReference) {
+    for(int look=1;look<=filters::kLookCount;++look) {
+        const auto lut=filters::BuildLook(look);
+        for(int b=0;b<17;++b) for(int g=0;g<17;++g) for(int r=0;r<17;++r) {
+            const auto& voxel=lut[filters::LutIndex(r,g,b)];
+            EXPECT_TRUE(std::isfinite(voxel.r)); EXPECT_TRUE(std::isfinite(voxel.g)); EXPECT_TRUE(std::isfinite(voxel.b));
+            EXPECT_GE(voxel.r,0); EXPECT_LE(voxel.r,1); EXPECT_GE(voxel.g,0); EXPECT_LE(voxel.g,1);
+            EXPECT_GE(voxel.b,0); EXPECT_LE(voxel.b,1); EXPECT_FLOAT_EQ(voxel.a,1);
+            const auto expected=filters::LookReference({r/16.f,g/16.f,b/16.f},look);
+            EXPECT_FLOAT_EQ(voxel.r,expected.r); EXPECT_FLOAT_EQ(voxel.g,expected.g); EXPECT_FLOAT_EQ(voxel.b,expected.b);
+        }
+    }
+}
+TEST(ColorLut, StrengthZeroBypassesAndHalfStrengthBlendsExactly) {
+    const auto lut=filters::BuildLook(2);
+    const filters::Rgb c{.3f,.4f,.5f};
+    const auto bypass=filters::SampleLook(lut,c,0), full=filters::SampleLook(lut,c,1), half=filters::SampleLook(lut,c,.5f);
+    EXPECT_FLOAT_EQ(bypass.r,c.r); EXPECT_FLOAT_EQ(bypass.g,c.g); EXPECT_FLOAT_EQ(bypass.b,c.b);
+    EXPECT_NEAR(half.r,(c.r+full.r)*.5f,1e-6f); EXPECT_NEAR(half.g,(c.g+full.g)*.5f,1e-6f);
+    EXPECT_NEAR(half.b,(c.b+full.b)*.5f,1e-6f);
+}
+TEST(ColorLut, MonochromeRemovesChromaAndUnknownLookIsRejected) {
+    const auto lut=filters::BuildLook(4);
+    const auto result=filters::SampleLook(lut,{.83f,.24f,.61f},1);
+    EXPECT_NEAR(result.r,result.g,1e-6f); EXPECT_NEAR(result.g,result.b,1e-6f);
+    EXPECT_THROW(filters::BuildLook(-1),std::invalid_argument);
+    EXPECT_THROW(filters::BuildLook(5),std::invalid_argument);
+}
+TEST(ColorLut, SettingsRoundTripClampAndGameProfileCopy) {
+    Settings s;
+    ASSERT_TRUE(FromJson(R"({"color_look":40,"color_look_strength":-3,"color_look_enabled":false})",s));
+    EXPECT_EQ(s.colorLook,4); EXPECT_FLOAT_EQ(s.colorLookStrength,0); EXPECT_FALSE(s.colorLookEnabled);
+    Settings copy;
+    ASSERT_TRUE(FromJson(ToJson(s),copy));
+    EXPECT_EQ(copy.colorLook,4); EXPECT_FLOAT_EQ(copy.colorLookStrength,0); EXPECT_FALSE(copy.colorLookEnabled);
+    copy=Settings{}; CopyGameSettings(copy,s);
+    EXPECT_EQ(copy.colorLook,4); EXPECT_FALSE(copy.colorLookEnabled); EXPECT_FLOAT_EQ(copy.colorLookStrength,0);
+    Settings legacy; ASSERT_TRUE(FromJson("{}",legacy)); EXPECT_EQ(legacy.colorLook,0);
+}
+TEST(Bundle, V2PreservesLookAndV1MigratesToDisabledLook) {
+    Settings source,destination; source.colorLook=3; source.colorLookStrength=.6f; source.colorLookEnabled=false;
+    std::string error;
+    ASSERT_TRUE(ImportSettingsBundle(ExportSettingsBundle(source),destination,error));
+    EXPECT_EQ(destination.colorLook,3); EXPECT_FLOAT_EQ(destination.colorLookStrength,.6f); EXPECT_FALSE(destination.colorLookEnabled);
+    auto legacy=nlohmann::json::parse(ExportSettingsBundle(source));
+    legacy["version"]=1;
+    legacy["settings"].erase("color_look"); legacy["settings"].erase("color_look_enabled"); legacy["settings"].erase("color_look_strength");
+    ASSERT_TRUE(ImportSettingsBundle(legacy.dump(),destination,error));
+    EXPECT_EQ(destination.colorLook,0); EXPECT_FLOAT_EQ(destination.colorLookStrength,1); EXPECT_TRUE(destination.colorLookEnabled);
+    legacy["settings"]["color_look"]=2;
+    const auto before=ToJson(destination);
+    EXPECT_FALSE(ImportSettingsBundle(legacy.dump(),destination,error)); EXPECT_EQ(ToJson(destination),before);
+}
+TEST(ColorLut, ImagePresetsPreserveIndependentLookSettings) {
+    for(int i=0;i<4;++i) {
+        Settings s; s.colorLook=2; s.colorLookStrength=.35f; s.colorLookEnabled=false;
+        filters::Apply(static_cast<filters::Preset>(i),s);
+        EXPECT_EQ(s.colorLook,2); EXPECT_FLOAT_EQ(s.colorLookStrength,.35f); EXPECT_FALSE(s.colorLookEnabled);
+    }
 }

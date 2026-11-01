@@ -19,6 +19,18 @@ std::unordered_map<std::string, Image> cache;
 size_t cachedBytes=0;
 std::vector<ComPtr<ID3D11ShaderResourceView>> frameReferences;
 const std::unordered_map<std::string, std::string> translations = {
+    {"3D LUT color looks","مظاهر ألوان 3D LUT"},
+    {"SDR artistic looks processed on the GPU, after filters and OLED. Not HDR or calibrated color management.","مظاهر فنية SDR تعالج على معالج الرسوم بعد الفلاتر وOLED. ليست HDR أو إدارة ألوان معايرة."},
+    {"Enable color look","تفعيل مظهر الألوان"},
+    {"Color look","مظهر الألوان"},
+    {"Warm","دافئ"},
+    {"Cool","بارد"},
+    {"Muted","ألوان هادئة"},
+    {"Monochrome","أحادي اللون"},
+    {"Color look strength","شدة مظهر الألوان"},
+    {"Reset color look only","إعادة ضبط مظهر الألوان فقط"},
+    {"Image presets and the eight-filter reset leave the color look unchanged.","إعدادات الصورة الجاهزة وإعادة ضبط الفلاتر الثمانية لا تغيّر مظهر الألوان."},
+
     {"Setup guide","دليل الإعداد"},
     {"Start here: capture-only operation, without injection, drivers or administrator rights. Anti-cheat acceptance is not guaranteed.","ابدأ هنا: الالتقاط فقط، دون حقن أو برامج تشغيل أو صلاحيات مسؤول. قبول أنظمة مكافحة الغش غير مضمون."},
     {"Readiness observations","حالة المتطلبات المرصودة"},

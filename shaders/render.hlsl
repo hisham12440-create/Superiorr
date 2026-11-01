@@ -7,6 +7,7 @@ Texture2D<float4> tB : register(t1);   // PSMid: current frame
 Texture2D<float4> tFlow : register(t2);
 StructuredBuffer<uint> tStats : register(t3);
 Texture2D<float4> tReverseFlow : register(t4);
+Texture3D<float4> tColorLut : register(t5);
 SamplerState sLin : register(s0);
 
 cbuffer CB : register(b0)
@@ -29,7 +30,8 @@ cbuffer CB : register(b0)
     float2 cbPadding;
     float temperature;
     float aaStrength;
-    float2 cbPadding2;
+    float lookStrength;
+    float cbPadding2;
 };
 
 struct VSOut
@@ -336,6 +338,14 @@ float4 PSFinal(VSOut i) : SV_Target
     c = pow(c, 1.0 / max(gamma, 0.5));
     float warmth = clamp(temperature, -1.0, 1.0);
     c = saturate(c * float3(1.0 + 0.12 * warmth, 1.0, 1.0 - 0.12 * warmth));
+
+    // Display-referred SDR 17^3 LUT, trilinear filtering at texel centres.
+    // Applied after ordinary filters/OLED and before dither; original split bypasses it.
+    [branch] if (lookStrength > 0)
+    {
+        float3 lutUv = (saturate(c) * 16.0 + 0.5) / 17.0;
+        c = lerp(c, tColorLut.SampleLevel(sLin, lutUv, 0).rgb, saturate(lookStrength));
+    }
 
     // Triangular dither before the 8-bit back buffer: removes banding in gradients.
     float n1 = frac(sin(dot(p + frame, float2(12.9898, 78.233))) * 43758.5453);

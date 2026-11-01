@@ -13,6 +13,9 @@ void CopyGameSettings(Settings& d, const Settings& s) {
     d.vibranceEnabled = s.vibranceEnabled;
     d.temperatureEnabled = s.temperatureEnabled;
     d.aaStrength = s.aaStrength;
+    d.colorLook = s.colorLook;
+    d.colorLookEnabled = s.colorLookEnabled;
+    d.colorLookStrength = s.colorLookStrength;
     d.temperature = s.temperature;
     d.maxMultiplier = s.maxMultiplier;
     d.comfortMode = s.comfortMode; d.frameGen = s.frameGen; d.antiAlias = s.antiAlias;

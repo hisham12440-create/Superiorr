@@ -8,6 +8,7 @@
 
 #include "core/log.h"
 #include "filters/parameters.h"
+#include "filters/color_lut.h"
 #include "shaders_gen.h"
 
 namespace superior {
@@ -32,7 +33,7 @@ struct RenderCb {
     float sharp, oledLevel, oledIntensity, vibrance;
     float contrast, saturation, brightness, gamma;
     float splitPreview, phase, pad1, pad2;
-    float temperature, aaStrength, pad3, pad4;
+    float temperature, aaStrength, lookStrength, pad4;
 };
 static_assert(sizeof(RenderCb) == 96, "constant buffer layout");
 
@@ -86,6 +87,22 @@ void Renderer::InitDevice() {
     sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     sd.MaxLOD = D3D11_FLOAT32_MAX;
     HR(dev_->CreateSamplerState(&sd, &sampler_));
+
+    static_assert(sizeof(filters::LutVoxel)==16, "LUT upload layout");
+    for(int look=1;look<=filters::kLookCount;++look) {
+        const auto voxels=filters::BuildLook(look);
+        D3D11_TEXTURE3D_DESC desc{};
+        desc.Width=desc.Height=desc.Depth=filters::kLutEdge;
+        desc.MipLevels=1; desc.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;
+        desc.Usage=D3D11_USAGE_IMMUTABLE; desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA data{};
+        data.pSysMem=voxels.data();
+        data.SysMemPitch=filters::kLutEdge*sizeof(filters::LutVoxel);
+        data.SysMemSlicePitch=filters::kLutEdge*data.SysMemPitch;
+        ComPtr<ID3D11Texture3D> texture;
+        HR(dev_->CreateTexture3D(&desc,&data,&texture));
+        HR(dev_->CreateShaderResourceView(texture.Get(),nullptr,&colorLuts_[look-1]));
+    }
 
     D3D11_BUFFER_DESC bd2{};
     bd2.Usage = D3D11_USAGE_DYNAMIC;
@@ -390,6 +407,8 @@ PresentResult Renderer::PresentFinal(Src s, const Settings& st, float phase) {
     cb.saturation = parameters.saturation;
     cb.brightness = parameters.brightness;
     cb.gamma = parameters.gamma;
+    const int look=std::clamp(st.colorLook,0,filters::kLookCount);
+    cb.lookStrength=(st.colorLookEnabled && look>0) ? std::clamp(st.colorLookStrength,0.f,1.f) : 0;
     cb.temperature = parameters.temperature;
     cb.aaStrength = parameters.aaStrength;
     cb.splitPreview = st.splitPreview ? 1.0f : 0.0f;
@@ -404,7 +423,11 @@ PresentResult Renderer::PresentFinal(Src s, const Settings& st, float phase) {
     // Final shader t1 is the unfiltered real source for split preview.
     ID3D11ShaderResourceView* original = cur_.srv.Get();
     ctx_->PSSetShaderResources(1, 1, &original);
+    ID3D11ShaderResourceView* lut=(cb.lookStrength>0) ? colorLuts_[look-1].Get() : nullptr;
+    ctx_->PSSetShaderResources(5,1,&lut);
     Draw(bbRtv_.Get(), outW_, outH_, psFinal_.Get(), up_.srv.Get());
+    lut=nullptr;
+    ctx_->PSSetShaderResources(5,1,&lut);
     original = nullptr;
     ctx_->PSSetShaderResources(1, 1, &original);
 

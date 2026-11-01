@@ -19,6 +19,8 @@ void Settings::Clamp() {
     saturation = std::min(2.0f, std::max(0.0f, saturation));
     brightness = std::min(0.25f, std::max(-0.25f, brightness));
     gamma = std::min(2.0f, std::max(0.5f, gamma));
+    colorLook = std::clamp(colorLook, 0, 4);
+    colorLookStrength = std::clamp(colorLookStrength, 0.0f, 1.0f);
     aaStrength = std::clamp(aaStrength, 0.0f, 1.0f);
     temperature = std::clamp(temperature, -1.0f, 1.0f);
     vibrance = std::min(1.0f, std::max(0.0f, vibrance));
@@ -38,6 +40,9 @@ std::string ToJson(const Settings& s) {
     j["vibrance_enabled"] = s.vibranceEnabled;
     j["temperature_enabled"] = s.temperatureEnabled;
     j["aa_strength"] = s.aaStrength;
+    j["color_look"] = s.colorLook;
+    j["color_look_enabled"] = s.colorLookEnabled;
+    j["color_look_strength"] = s.colorLookStrength;
     j["temperature"] = s.temperature;
     j["contrast"] = s.contrast;
     j["saturation"] = s.saturation;
@@ -82,6 +87,9 @@ bool FromJson(const std::string& text, Settings& out) {
         s.vibranceEnabled = j.value("vibrance_enabled", s.vibranceEnabled);
         s.temperatureEnabled = j.value("temperature_enabled", s.temperatureEnabled);
         s.aaStrength = j.value("aa_strength", s.aaStrength);
+        s.colorLook = j.value("color_look", s.colorLook);
+        s.colorLookEnabled = j.value("color_look_enabled", s.colorLookEnabled);
+        s.colorLookStrength = j.value("color_look_strength", s.colorLookStrength);
         s.temperature = j.value("temperature", s.temperature);
         s.contrast = j.value("contrast", s.contrast);
         s.saturation = j.value("saturation", s.saturation);

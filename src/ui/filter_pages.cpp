@@ -47,6 +47,18 @@ bool Panel::DrawFilters() {
         }
         ImGui::EndTable();
     }
+    localized::SeparatorText("3D LUT color looks");
+    localized::TextWrapped("SDR artistic looks processed on the GPU, after filters and OLED. Not HDR or calibrated color management.");
+    changed |= localized::Checkbox("Enable color look",&settings_->colorLookEnabled);
+    const char* looks[]={"Off","Warm","Cool","Muted","Monochrome"};
+    changed |= localized::Combo("Color look",&settings_->colorLook,looks,5);
+    ImGui::BeginDisabled(!settings_->colorLookEnabled || settings_->colorLook==0);
+    changed |= localized::SliderFloat("Color look strength",&settings_->colorLookStrength,0,1,"%.2f");
+    ImGui::EndDisabled();
+    if(localized::Button("Reset color look only")) {
+        settings_->colorLook=0; settings_->colorLookStrength=1; settings_->colorLookEnabled=true; changed=true;
+    }
+    localized::TextWrapped("Image presets and the eight-filter reset leave the color look unchanged.");
     localized::TextWrapped("Temperature is an artistic RGB adjustment, not calibrated Kelvin or HDR conversion.");
     if (localized::Button("Reset filters only")) {
         filters::Apply(filters::Preset::Clean,*settings_);

@@ -17,7 +17,7 @@ nlohmann::json ImageSettings(const Settings& s) {
 }
 std::string ExportSettingsBundle(const Settings& settings) {
     Settings copy=settings; copy.Clamp();
-    return nlohmann::json{{"format","superior-settings"},{"version",1},{"settings",ImageSettings(copy)}}.dump(2);
+    return nlohmann::json{{"format","superior-settings"},{"version",2},{"settings",ImageSettings(copy)}}.dump(2);
 }
 bool ImportSettingsBundle(const std::string& text, Settings& destination, std::string& error) {
     error.clear();
@@ -28,11 +28,15 @@ bool ImportSettingsBundle(const std::string& text, Settings& destination, std::s
             return true;
         });
         if(!root.is_object() || root.size()!=3 || root.value("format",std::string{})!="superior-settings" ||
-            !root.at("version").is_number_integer() || root.at("version")!=1) {
+            !root.at("version").is_number_integer() || (root.at("version")!=1 && root.at("version")!=2)) {
             error="Unsupported settings bundle format or version"; return false;
         }
         const auto& values=root.at("settings");
-        const auto schema=ImageSettings(Settings{});
+        auto schema=ImageSettings(Settings{});
+        const bool legacy=root.at("version")==1;
+        if(legacy) {
+            schema.erase("color_look"); schema.erase("color_look_enabled"); schema.erase("color_look_strength");
+        }
         if(!values.is_object() || values.size()!=schema.size()) {
             error="Incomplete or unknown settings in bundle"; return false;
         }
@@ -50,6 +54,9 @@ bool ImportSettingsBundle(const std::string& text, Settings& destination, std::s
             }
         }
         Settings candidate=destination;
+        if(legacy) {
+            candidate.colorLook=0; candidate.colorLookEnabled=true; candidate.colorLookStrength=1;
+        }
         if(!FromJson(values.dump(),candidate)) { error="Invalid settings value in bundle"; return false; }
         Settings result=destination;
         CopyGameSettings(result,candidate);

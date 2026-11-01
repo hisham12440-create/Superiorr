@@ -3,10 +3,11 @@
 
 namespace superior {
 
-// Crash-safe rotating log: flushed on every line, rotated at ~1 MB.
+// Rotating UTF-8 log, flushed on every line. Not a crash-dump facility.
 class Log {
 public:
-    static void Open(const std::string& path);
+    static bool Open(const std::string& path);
+    static void Close();
     static void Write(const char* level, const char* fmt, ...);
 };
 

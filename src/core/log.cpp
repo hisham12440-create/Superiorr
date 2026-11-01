@@ -4,31 +4,47 @@
 #include <cstdio>
 #include <ctime>
 #include <mutex>
+#include <filesystem>
 
 namespace superior {
 namespace {
 std::mutex g_mutex;
 FILE* g_file = nullptr;
-std::string g_path;
+std::filesystem::path g_path;
 constexpr long kMaxBytes = 1024 * 1024;
 
+FILE* OpenFile(const std::filesystem::path& path) {
+#ifdef _WIN32
+    FILE* file = nullptr;
+    return _wfopen_s(&file, path.c_str(), L"a") == 0 ? file : nullptr;
+#else
+    return std::fopen(path.c_str(), "a");
+#endif
+}
 void Rotate() {
-    if (g_file) {
-        std::fclose(g_file);
-        g_file = nullptr;
-    }
-    std::string old = g_path + ".1";
-    std::remove(old.c_str());
-    std::rename(g_path.c_str(), old.c_str());
-    g_file = std::fopen(g_path.c_str(), "a");
+    if (g_file) { std::fclose(g_file); g_file = nullptr; }
+    auto old = g_path;
+    old += ".1";
+    std::error_code error;
+    std::filesystem::remove(old, error);
+    if (!error) std::filesystem::rename(g_path, old, error);
+    g_file = OpenFile(g_path);
 }
 }  // namespace
 
-void Log::Open(const std::string& path) {
+bool Log::Open(const std::string& path) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_path = path;
-    if (g_file) std::fclose(g_file);
-    g_file = std::fopen(path.c_str(), "a");
+    try {
+        g_path = std::filesystem::u8path(path);
+        if (g_file) { std::fclose(g_file); g_file = nullptr; }
+        g_file = OpenFile(g_path);
+        return g_file != nullptr;
+    } catch (const std::exception&) { return false; }
+}
+
+void Log::Close() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_file) { std::fclose(g_file); g_file = nullptr; }
 }
 
 void Log::Write(const char* level, const char* fmt, ...) {

@@ -4,7 +4,10 @@
 #include <wrl/client.h>
 
 #include <cstdint>
+#include <array>
+#include <optional>
 #include <string>
+#include "core/performance_history.h"
 
 #include "core/config.h"
 
@@ -19,6 +22,7 @@ struct FlowStats {
 };
 
 enum class Src { Cur, Mid };
+enum class PresentResult { Submitted, Occluded, OtherStatus };
 
 // All GPU work. Every COM object is held in a ComPtr (RAII); every D3D call is checked
 // and failures throw std::runtime_error.
@@ -34,11 +38,22 @@ public:
 
     void SetSourceSize(UINT w, UINT h);
     void PushFrame(ID3D11Texture2D* src, UINT w, UINT h);
+    void ResetHistory() { frames_ = 0; }
     int FramesHeld() const { return frames_ < 2 ? frames_ : 2; }
 
-    FlowStats ComputeFlow();
-    void RenderMid();
-    void PresentFinal(Src s, const Settings& st);
+    void ComputeFlow();
+    struct TimingBatch {
+        std::array<GpuSample,6> values{};
+        size_t count=0;
+        auto begin() { return values.begin(); }
+        auto end() { return values.begin()+count; }
+    };
+    TimingBatch PollGpuTimes();
+    void StartTimingEpoch() { ++timingEpoch_; }
+    void BeginGpuTiming(GpuScope scope);
+    void EndGpuTiming();
+    void RenderMid(float phase);
+    PresentResult PresentFinal(Src s, const Settings& st, float phase = .5f);
 
 private:
     struct Tex {
@@ -50,6 +65,16 @@ private:
     void Draw(ID3D11RenderTargetView* rtv, UINT w, UINT h, ID3D11PixelShader* ps, ID3D11ShaderResourceView* srv);
     void UpdateCb(ID3D11Buffer* cb, const void* data, size_t bytes);
 
+    struct TimingSlot {
+        ComPtr<ID3D11Query> disjoint, start, end;
+        bool pending = false;
+        uint64_t epoch=0, sequence=0;
+        GpuScope scope=GpuScope::CaptureProcessing;
+    };
+    std::array<TimingSlot, 6> timings_;
+    int activeTiming_ = -1;
+    bool timingAvailable_ = false;
+    uint64_t timingEpoch_=0, timingSequence_=0;
     ComPtr<ID3D11Device> dev_;
     ComPtr<ID3D11DeviceContext> ctx_;
     std::wstring adapterName_;
@@ -58,6 +83,8 @@ private:
     ComPtr<ID3D11PixelShader> psMid_, psAA_, psUp_, psFinal_;
     ComPtr<ID3D11ComputeShader> csFlow_;
     ComPtr<ID3D11SamplerState> sampler_;
+    // Immutable, device-lifetime LUTs; no per-frame upload or CPU image readback.
+    std::array<ComPtr<ID3D11ShaderResourceView>,4> colorLuts_;
     ComPtr<ID3D11Buffer> cbRender_, cbFlow_;
 
     ComPtr<IDXGISwapChain2> sc_;
@@ -70,11 +97,15 @@ private:
     int frames_ = 0;
     uint32_t frameNo_ = 0;
 
+    ComPtr<ID3D11Texture2D> reverseFlowTex_;
+    ComPtr<ID3D11ShaderResourceView> reverseFlowSrv_;
+    ComPtr<ID3D11UnorderedAccessView> reverseFlowUav_;
     ComPtr<ID3D11Texture2D> flowTex_;
     ComPtr<ID3D11ShaderResourceView> flowSrv_;
     ComPtr<ID3D11UnorderedAccessView> flowUav_;
-    ComPtr<ID3D11Buffer> statsBuf_, statsStaging_;
+    ComPtr<ID3D11Buffer> statsBuf_;
     ComPtr<ID3D11UnorderedAccessView> statsUav_;
+    ComPtr<ID3D11ShaderResourceView> statsSrv_;
     UINT blocksX_ = 0, blocksY_ = 0;
 };
 

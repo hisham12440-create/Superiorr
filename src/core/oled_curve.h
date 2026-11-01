@@ -12,7 +12,7 @@ constexpr float kOledSpec[4] = {0.0f, 0.03f, 0.06f, 0.10f};
 constexpr float kOledLocal[4] = {0.0f, 0.10f, 0.20f, 0.30f};
 
 inline float OledCurve(float y, int level, float intensity) {
-    if (level <= 0) return y;
+    if (level <= 0 || intensity <= 0) return y;
     level = std::min(level, 3);
     const float a = std::min(1.0f, std::max(0.0f, intensity));
     y = std::min(1.0f, std::max(0.0f, y));

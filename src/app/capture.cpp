@@ -34,6 +34,10 @@ struct Capture::Impl {
 Capture::Capture() : p_(new Impl) {}
 Capture::~Capture() { Stop(); }
 
+std::optional<bool> Capture::Supported() {
+    try { return wgc::GraphicsCaptureSession::IsSupported(); }
+    catch(const winrt::hresult_error&) { return std::nullopt; }
+}
 bool Capture::Active() const { return p_->active; }
 bool Capture::Closed() const { return p_->closed.load(); }
 
@@ -118,8 +122,10 @@ bool Capture::Poll(const std::function<void(ID3D11Texture2D*, UINT, UINT)>& onFr
             return false;
         }
         if (cs.Width != p_->lastSize.Width || cs.Height != p_->lastSize.Height) {
-            p_->lastSize = cs;
+            latest.Close();
             p_->pool.Recreate(p_->rtDevice, wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, cs);
+            p_->lastSize = cs;
+            return false;  // Wait for a surface from the resized pool.
         }
 
         auto access = latest.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();

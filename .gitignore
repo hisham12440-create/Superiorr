@@ -3,3 +3,8 @@ dist/
 *.zip
 *.log
 settings.json
+
+profiles/
+.superior-write-probe*
+
+.cache/

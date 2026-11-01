@@ -1,6 +1,5 @@
 #include "renderer.h"
 
-#include <d3dcompiler.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -8,6 +7,8 @@
 #include <stdexcept>
 
 #include "core/log.h"
+#include "filters/parameters.h"
+#include "filters/color_lut.h"
 #include "shaders_gen.h"
 
 namespace superior {
@@ -26,25 +27,15 @@ namespace {
         if (FAILED(hr_)) Fail(#expr, hr_);     \
     } while (0)
 
-ComPtr<ID3DBlob> Compile(const char* src, const char* name, const char* entry, const char* target) {
-    ComPtr<ID3DBlob> code, err;
-    const HRESULT hr = D3DCompile(src, std::strlen(src), name, nullptr, nullptr, entry, target,
-                                  D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &err);
-    if (FAILED(hr)) {
-        std::string msg = err ? std::string(static_cast<const char*>(err->GetBufferPointer()), err->GetBufferSize())
-                              : std::string("unknown error");
-        SERR("Shader %s:%s failed: %s", name, entry, msg.c_str());
-        throw std::runtime_error("Shader compile failed (" + std::string(entry) + "): " + msg);
-    }
-    return code;
-}
-
 struct RenderCb {
     float srcW, srcH, outW, outH;
     float offX, offY, scale, frame;
     float sharp, oledLevel, oledIntensity, vibrance;
+    float contrast, saturation, brightness, gamma;
+    float splitPreview, phase, splitPosition, splitFlags;
+    float temperature, aaStrength, lookStrength, pad4;
 };
-static_assert(sizeof(RenderCb) == 48, "constant buffer layout");
+static_assert(sizeof(RenderCb) == 96, "constant buffer layout");
 
 struct FlowCb {
     float srcW, srcH, pad0, pad1;
@@ -84,24 +75,34 @@ void Renderer::InitDevice() {
     ComPtr<ID3D11Multithread> mt;
     if (SUCCEEDED(ctx_.As(&mt))) mt->SetMultithreadProtected(TRUE);
 
-    auto vsBlob = Compile(kRenderHlsl, "render.hlsl", "VS", "vs_5_0");
-    auto psMidBlob = Compile(kRenderHlsl, "render.hlsl", "PSMid", "ps_5_0");
-    auto psAABlob = Compile(kRenderHlsl, "render.hlsl", "PSAA", "ps_5_0");
-    auto psUpBlob = Compile(kRenderHlsl, "render.hlsl", "PSUp", "ps_5_0");
-    auto psFinBlob = Compile(kRenderHlsl, "render.hlsl", "PSFinal", "ps_5_0");
-    auto csBlob = Compile(kFlowHlsl, "flow.hlsl", "CSFlow", "cs_5_0");
-    HR(dev_->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vs_));
-    HR(dev_->CreatePixelShader(psMidBlob->GetBufferPointer(), psMidBlob->GetBufferSize(), nullptr, &psMid_));
-    HR(dev_->CreatePixelShader(psAABlob->GetBufferPointer(), psAABlob->GetBufferSize(), nullptr, &psAA_));
-    HR(dev_->CreatePixelShader(psUpBlob->GetBufferPointer(), psUpBlob->GetBufferSize(), nullptr, &psUp_));
-    HR(dev_->CreatePixelShader(psFinBlob->GetBufferPointer(), psFinBlob->GetBufferSize(), nullptr, &psFinal_));
-    HR(dev_->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &csFlow_));
+    HR(dev_->CreateVertexShader(kShaderVS, sizeof kShaderVS, nullptr, &vs_));
+    HR(dev_->CreatePixelShader(kShaderPSMid, sizeof kShaderPSMid, nullptr, &psMid_));
+    HR(dev_->CreatePixelShader(kShaderPSAA, sizeof kShaderPSAA, nullptr, &psAA_));
+    HR(dev_->CreatePixelShader(kShaderPSUp, sizeof kShaderPSUp, nullptr, &psUp_));
+    HR(dev_->CreatePixelShader(kShaderPSFinal, sizeof kShaderPSFinal, nullptr, &psFinal_));
+    HR(dev_->CreateComputeShader(kShaderCSFlow, sizeof kShaderCSFlow, nullptr, &csFlow_));
 
     D3D11_SAMPLER_DESC sd{};
     sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     sd.MaxLOD = D3D11_FLOAT32_MAX;
     HR(dev_->CreateSamplerState(&sd, &sampler_));
+
+    static_assert(sizeof(filters::LutVoxel)==16, "LUT upload layout");
+    for(int look=1;look<=filters::kLookCount;++look) {
+        const auto voxels=filters::BuildLook(look);
+        D3D11_TEXTURE3D_DESC desc{};
+        desc.Width=desc.Height=desc.Depth=filters::kLutEdge;
+        desc.MipLevels=1; desc.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;
+        desc.Usage=D3D11_USAGE_IMMUTABLE; desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA data{};
+        data.pSysMem=voxels.data();
+        data.SysMemPitch=filters::kLutEdge*sizeof(filters::LutVoxel);
+        data.SysMemSlicePitch=filters::kLutEdge*data.SysMemPitch;
+        ComPtr<ID3D11Texture3D> texture;
+        HR(dev_->CreateTexture3D(&desc,&data,&texture));
+        HR(dev_->CreateShaderResourceView(texture.Get(),nullptr,&colorLuts_[look-1]));
+    }
 
     D3D11_BUFFER_DESC bd2{};
     bd2.Usage = D3D11_USAGE_DYNAMIC;
@@ -112,11 +113,11 @@ void Renderer::InitDevice() {
     bd2.ByteWidth = sizeof(FlowCb);
     HR(dev_->CreateBuffer(&bd2, nullptr, &cbFlow_));
 
-    // Stats buffer (3 counters) + staging copy. Only 16 bytes ever cross to the CPU.
+    // Stats stay on the GPU; midpoint shader chooses safe fallback on cuts.
     D3D11_BUFFER_DESC sb{};
     sb.ByteWidth = 16;
     sb.Usage = D3D11_USAGE_DEFAULT;
-    sb.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    sb.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
     sb.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
     sb.StructureByteStride = 4;
     HR(dev_->CreateBuffer(&sb, nullptr, &statsBuf_));
@@ -125,12 +126,66 @@ void Renderer::InitDevice() {
     ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
     ud.Buffer.NumElements = 4;
     HR(dev_->CreateUnorderedAccessView(statsBuf_.Get(), &ud, &statsUav_));
-    sb.Usage = D3D11_USAGE_STAGING;
-    sb.BindFlags = 0;
-    sb.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    HR(dev_->CreateBuffer(&sb, nullptr, &statsStaging_));
+    D3D11_SHADER_RESOURCE_VIEW_DESC statsDesc{};
+    statsDesc.Format = DXGI_FORMAT_UNKNOWN;
+    statsDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+    statsDesc.Buffer.NumElements = 4;
+    HR(dev_->CreateShaderResourceView(statsBuf_.Get(), &statsDesc, &statsSrv_));
 
+    timingAvailable_ = true;
+    for (auto& slot : timings_) {
+        D3D11_QUERY_DESC q{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
+        if (FAILED(dev_->CreateQuery(&q, &slot.disjoint))) { timingAvailable_ = false; break; }
+        q.Query = D3D11_QUERY_TIMESTAMP;
+        if (FAILED(dev_->CreateQuery(&q, &slot.start)) || FAILED(dev_->CreateQuery(&q, &slot.end))) {
+            timingAvailable_ = false;
+            break;
+        }
+    }
     SLOG("Device ready on %ls (feature level 0x%X)", adapterName_.c_str(), static_cast<unsigned>(got));
+}
+
+Renderer::TimingBatch Renderer::PollGpuTimes() {
+    TimingBatch result;
+    if (!timingAvailable_) return result;
+    // Do not flush or wait: incomplete samples remain in the ring.
+    for (auto& slot : timings_) {
+        if (!slot.pending) continue;
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint{};
+        UINT64 start = 0, end = 0;
+        const HRESULT ready = ctx_->GetData(slot.disjoint.Get(), &disjoint, sizeof disjoint, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        if (ready == S_FALSE) continue;
+        if (FAILED(ready)) { slot.pending = false; continue; }
+        const HRESULT startReady=ctx_->GetData(slot.start.Get(), &start, sizeof start, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        const HRESULT endReady=ctx_->GetData(slot.end.Get(), &end, sizeof end, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        if(FAILED(startReady) || FAILED(endReady)) { slot.pending=false; continue; }
+        if(startReady!=S_OK || endReady!=S_OK) continue;
+        slot.pending = false;
+        if (slot.epoch==timingEpoch_ && !disjoint.Disjoint && disjoint.Frequency && end >= start)
+            result.values[result.count++]={slot.sequence,slot.scope,1000.0*static_cast<double>(end-start)/static_cast<double>(disjoint.Frequency)};
+    }
+    std::sort(result.begin(),result.end(),[](const auto& a,const auto& b){return a.sequence<b.sequence;});
+    return result;
+}
+void Renderer::BeginGpuTiming(GpuScope scope) {
+    if (!timingAvailable_ || activeTiming_ >= 0) return;
+    for (size_t i = 0; i < timings_.size(); ++i) {
+        auto& slot = timings_[i];
+        if (slot.pending) continue;
+        slot.scope=scope; slot.epoch=timingEpoch_; slot.sequence=++timingSequence_;
+        activeTiming_ = static_cast<int>(i);
+        ctx_->Begin(slot.disjoint.Get());
+        ctx_->End(slot.start.Get());
+        break;
+    }
+}
+void Renderer::EndGpuTiming() {
+    if (activeTiming_ < 0) return;
+    auto& slot = timings_[static_cast<size_t>(activeTiming_)];
+    ctx_->End(slot.end.Get());
+    ctx_->End(slot.disjoint.Get());
+    slot.pending = true;
+    activeTiming_ = -1;
 }
 
 void Renderer::CreateOutput(HWND hwnd, UINT w, UINT h) {
@@ -168,15 +223,19 @@ void Renderer::CreateOutput(HWND hwnd, UINT w, UINT h) {
 }
 
 void Renderer::DestroyOutput() {
+    EndGpuTiming();
     if (ctx_) ctx_->ClearState();
     bbRtv_.Reset();
-    sc_.Reset();
+    if (waitable_) CloseHandle(waitable_);
     waitable_ = nullptr;
+    sc_.Reset();
     prev_ = Tex{};
     cur_ = Tex{};
     mid_ = Tex{};
     aa_ = Tex{};
     up_ = Tex{};
+    flowUav_.Reset(); flowSrv_.Reset(); flowTex_.Reset();
+    reverseFlowUav_.Reset(); reverseFlowSrv_.Reset(); reverseFlowTex_.Reset();
     srcW_ = srcH_ = 0;
     frames_ = 0;
 }
@@ -224,6 +283,10 @@ void Renderer::SetSourceSize(UINT w, UINT h) {
     HR(dev_->CreateTexture2D(&fd, nullptr, &flowTex_));
     HR(dev_->CreateShaderResourceView(flowTex_.Get(), nullptr, &flowSrv_));
     HR(dev_->CreateUnorderedAccessView(flowTex_.Get(), nullptr, &flowUav_));
+    reverseFlowUav_.Reset(); reverseFlowSrv_.Reset(); reverseFlowTex_.Reset();
+    HR(dev_->CreateTexture2D(&fd, nullptr, &reverseFlowTex_));
+    HR(dev_->CreateShaderResourceView(reverseFlowTex_.Get(), nullptr, &reverseFlowSrv_));
+    HR(dev_->CreateUnorderedAccessView(reverseFlowTex_.Get(), nullptr, &reverseFlowUav_));
     SLOG("Source size %ux%u, flow grid %ux%u", w, h, blocksX_, blocksY_);
 }
 
@@ -244,7 +307,7 @@ void Renderer::UpdateCb(ID3D11Buffer* cb, const void* data, size_t bytes) {
     ctx_->Unmap(cb, 0);
 }
 
-FlowStats Renderer::ComputeFlow() {
+void Renderer::ComputeFlow() {
     FlowCb cb{static_cast<float>(srcW_), static_cast<float>(srcH_), 0, 0};
     UpdateCb(cbFlow_.Get(), &cb, sizeof cb);
 
@@ -260,25 +323,27 @@ FlowStats Renderer::ComputeFlow() {
     ctx_->CSSetConstantBuffers(0, 1, cbs);
     ctx_->Dispatch(blocksX_, blocksY_, 1);
 
+    // A second independent search produces prev -> cur motion. Both directions
+    // contribute to the scene-cut/static counters, without CPU readback.
+    ID3D11UnorderedAccessView* unbind[2] = {nullptr, nullptr};
+    ctx_->CSSetUnorderedAccessViews(0, 2, unbind, nullptr);
+    ID3D11ShaderResourceView* reverseSources[2] = {cur_.srv.Get(), prev_.srv.Get()};
+    ctx_->CSSetShaderResources(0, 2, reverseSources);
+    ID3D11UnorderedAccessView* reverseTargets[2] = {reverseFlowUav_.Get(), statsUav_.Get()};
+    ctx_->CSSetUnorderedAccessViews(0, 2, reverseTargets, nullptr);
+    ctx_->Dispatch(blocksX_, blocksY_, 1);
+
     ID3D11UnorderedAccessView* nullUav[2] = {nullptr, nullptr};
     ctx_->CSSetUnorderedAccessViews(0, 2, nullUav, nullptr);
     ID3D11ShaderResourceView* nullSrv[2] = {nullptr, nullptr};
     ctx_->CSSetShaderResources(0, 2, nullSrv);
 
-    ctx_->CopyResource(statsStaging_.Get(), statsBuf_.Get());
-    D3D11_MAPPED_SUBRESOURCE m{};
-    HR(ctx_->Map(statsStaging_.Get(), 0, D3D11_MAP_READ, 0, &m));
-    const uint32_t* p = static_cast<const uint32_t*>(m.pData);
-    FlowStats s;
-    s.badBlocks = p[0];
-    s.totalBlocks = p[1];
-    s.staticBlocks = p[2];
-    ctx_->Unmap(statsStaging_.Get(), 0);
-    return s;
+
 }
 
-void Renderer::RenderMid() {
+void Renderer::RenderMid(float phase) {
     RenderCb cb{};
+    cb.phase = std::clamp(phase, 0.0f, 1.0f);
     cb.srcW = static_cast<float>(srcW_);
     cb.srcH = static_cast<float>(srcH_);
     UpdateCb(cbRender_.Get(), &cb, sizeof cb);
@@ -290,16 +355,16 @@ void Renderer::RenderMid() {
     ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ctx_->VSSetShader(vs_.Get(), nullptr, 0);
     ctx_->PSSetShader(psMid_.Get(), nullptr, 0);
-    ID3D11ShaderResourceView* srvs[3] = {prev_.srv.Get(), cur_.srv.Get(), flowSrv_.Get()};
-    ctx_->PSSetShaderResources(0, 3, srvs);
+    ID3D11ShaderResourceView* srvs[5] = {prev_.srv.Get(), cur_.srv.Get(), flowSrv_.Get(), statsSrv_.Get(), reverseFlowSrv_.Get()};
+    ctx_->PSSetShaderResources(0, 5, srvs);
     ID3D11SamplerState* smp = sampler_.Get();
     ctx_->PSSetSamplers(0, 1, &smp);
     ID3D11Buffer* cbs[1] = {cbRender_.Get()};
     ctx_->PSSetConstantBuffers(0, 1, cbs);
     ctx_->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nulls[3] = {nullptr, nullptr, nullptr};
-    ctx_->PSSetShaderResources(0, 3, nulls);
+    ID3D11ShaderResourceView* nulls[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    ctx_->PSSetShaderResources(0, 5, nulls);
     ID3D11RenderTargetView* nullRtv = nullptr;
     ctx_->OMSetRenderTargets(1, &nullRtv, nullptr);
 }
@@ -324,7 +389,9 @@ void Renderer::Draw(ID3D11RenderTargetView* rtv, UINT w, UINT h, ID3D11PixelShad
     ctx_->OMSetRenderTargets(1, &nullRtv, nullptr);
 }
 
-void Renderer::PresentFinal(Src s, const Settings& st) {
+PresentResult Renderer::PresentFinal(Src s, const Settings& st, float phase) {
+    BeginGpuTiming(GpuScope::FinalRendering);
+    if (s == Src::Mid) RenderMid(phase);
     const float scale = std::min(static_cast<float>(outW_) / srcW_, static_cast<float>(outH_) / srcH_);
     RenderCb cb{};
     cb.srcW = static_cast<float>(srcW_);
@@ -335,25 +402,48 @@ void Renderer::PresentFinal(Src s, const Settings& st) {
     cb.offY = (outH_ - srcH_ * scale) * 0.5f;
     cb.scale = scale;
     cb.frame = static_cast<float>(frameNo_++ % 1024);
-    cb.sharp = st.sharpness;
+    const auto parameters = filters::Effective(st);
+    cb.sharp = parameters.sharpness;
     cb.oledLevel = static_cast<float>(st.oledLevel);
     cb.oledIntensity = st.oledIntensity;
-    cb.vibrance = st.vibrance;
+    cb.vibrance = parameters.vibrance;
+    cb.contrast = parameters.contrast;
+    cb.saturation = parameters.saturation;
+    cb.brightness = parameters.brightness;
+    cb.gamma = parameters.gamma;
+    const int look=std::clamp(st.colorLook,0,filters::kLookCount);
+    cb.lookStrength=(st.colorLookEnabled && look>0) ? std::clamp(st.colorLookStrength,0.f,1.f) : 0;
+    cb.temperature = parameters.temperature;
+    cb.aaStrength = parameters.aaStrength;
+    cb.splitPreview = st.splitPreview ? 1.0f : 0.0f;
+    cb.splitPosition=st.previewPosition;
+    cb.splitFlags=static_cast<float>((st.previewAxis==1 ? 1 : 0) | (st.previewReverse ? 2 : 0) | (st.previewLine ? 4 : 0));
     UpdateCb(cbRender_.Get(), &cb, sizeof cb);
 
     ID3D11ShaderResourceView* src = (s == Src::Mid) ? mid_.srv.Get() : cur_.srv.Get();
-    if (st.antiAlias) {
+    if (parameters.aaStrength > 0) {
         Draw(aa_.rtv.Get(), srcW_, srcH_, psAA_.Get(), src);
         src = aa_.srv.Get();
     }
     Draw(up_.rtv.Get(), outW_, outH_, psUp_.Get(), src);
+    // Final shader t1 is the unfiltered real source for split preview.
+    ID3D11ShaderResourceView* original = cur_.srv.Get();
+    ctx_->PSSetShaderResources(1, 1, &original);
+    ID3D11ShaderResourceView* lut=(cb.lookStrength>0) ? colorLuts_[look-1].Get() : nullptr;
+    ctx_->PSSetShaderResources(5,1,&lut);
     Draw(bbRtv_.Get(), outW_, outH_, psFinal_.Get(), up_.srv.Get());
+    lut=nullptr;
+    ctx_->PSSetShaderResources(5,1,&lut);
+    original = nullptr;
+    ctx_->PSSetShaderResources(1, 1, &original);
 
+    EndGpuTiming();
     const HRESULT hr = sc_->Present(1, 0);
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
         Fail("Present (GPU device lost)", dev_->GetDeviceRemovedReason());
     }
-    if (FAILED(hr) && hr != DXGI_STATUS_OCCLUDED) Fail("Present", hr);
+    if (FAILED(hr)) Fail("Present", hr);
+    return hr == S_OK ? PresentResult::Submitted : hr == DXGI_STATUS_OCCLUDED ? PresentResult::Occluded : PresentResult::OtherStatus;
 }
 
 }  // namespace superior

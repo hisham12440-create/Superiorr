@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace superior {
@@ -16,6 +17,7 @@ public:
     Capture();
     ~Capture();
 
+    static std::optional<bool> Supported();
     bool Start(HWND target, ID3D11Device* dev, HANDLE frameEvent, std::string& error);
     void Stop();
     bool Active() const;

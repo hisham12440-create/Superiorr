@@ -5,6 +5,9 @@
 Texture2D<float4> tA : register(t0);   // PSMid: previous frame   | PSFinal: frame to display
 Texture2D<float4> tB : register(t1);   // PSMid: current frame
 Texture2D<float4> tFlow : register(t2);
+StructuredBuffer<uint> tStats : register(t3);
+Texture2D<float4> tReverseFlow : register(t4);
+Texture3D<float4> tColorLut : register(t5);
 SamplerState sLin : register(s0);
 
 cbuffer CB : register(b0)
@@ -18,6 +21,18 @@ cbuffer CB : register(b0)
     float oledLevel;
     float oledIntensity;
     float vibrance;
+    float contrast;
+    float saturation;
+    float brightness;
+    float gamma;
+    float splitPreview;
+    float phase;
+    float splitPosition;
+    float splitFlags;
+    float temperature;
+    float aaStrength;
+    float lookStrength;
+    float cbPadding2;
 };
 
 struct VSOut
@@ -39,6 +54,11 @@ static const float3 kLuma = float3(0.299, 0.587, 0.114);
 
 float4 PSMid(VSOut i) : SV_Target
 {
+    // GPU-only scene-cut / near-static fallback. Never discard localized changes.
+    uint total = tStats[1];
+    if (total == 0 || float(tStats[0]) / float(total) > 0.55 ||
+        float(tStats[2]) / float(total) >= 0.995)
+        return float4(tB.SampleLevel(sLin, i.pos.xy / srcSize, 0).rgb, 1);
     float2 pc = i.pos.xy;
     int2 ip = int2(pc);
     int2 blk = ip / 16;
@@ -61,19 +81,27 @@ float4 PSMid(VSOut i) : SV_Target
     float2 uv = pc / srcSize;
     float3 a0 = tA.SampleLevel(sLin, uv, 0).rgb;
     float3 b0 = tB.SampleLevel(sLin, uv, 0).rgb;
-    float3 xfade = 0.5 * (a0 + b0);
+    float t = saturate(phase);
+    float3 xfade = lerp(a0, b0, t);
 
     // Object at current position C was at C+v in the previous frame; midpoint M = C + v/2.
-    float3 pw = tA.SampleLevel(sLin, (pc + 0.5 * v) / srcSize, 0).rgb;
-    float3 cw = tB.SampleLevel(sLin, (pc - 0.5 * v) / srcSize, 0).rgb;
-    float3 warped = 0.5 * (pw + cw);
+    float3 pw = tA.SampleLevel(sLin, (pc + t * v) / srcSize, 0).rgb;
+    float3 cw = tB.SampleLevel(sLin, (pc - (1.0 - t) * v) / srcSize, 0).rgb;
+    float3 warped = lerp(pw, cw, t);
+    // Sample the reverse field at the matching previous-frame location.
+    int2 reverseBlock = clamp(int2((pc + v) / 16.0), int2(0,0), maxB);
+    float4 reverse = tReverseFlow.Load(int3(reverseBlock, 0));
+    float fbError = length(v + reverse.xy);
+    float consistency = saturate(1.0 - fbError / 2.5);
+    bool inBounds = all(pc + t*v >= 0) && all(pc + t*v < srcSize) &&
+                    all(pc - (1.0-t)*v >= 0) && all(pc - (1.0-t)*v < srcSize);
 
     float d = dot(abs(pw - cw), float3(0.3333, 0.3333, 0.3333));
     float cColor = saturate(1.0 - d / 0.08);
     float cVar = saturate(1.0 - varMax / 5.0);
     float cSad = saturate(1.0 - f0.z / 0.06);
     float cFast = saturate(1.0 - (length(v) - 40.0) / 20.0);
-    float conf = cColor * cVar * cSad * cFast;
+    float conf = cColor * cVar * cSad * cFast * consistency * (inBounds ? 1.0 : 0.0);
     conf = smoothstep(0.35, 0.8, conf);
 
     // Low confidence -> plain cross-fade, never a warped smear.
@@ -130,7 +158,7 @@ float4 PSAA(VSOut i) : SV_Target
     float blend = saturate(max(g1, g2) / rng) * 0.85;
     float3 r = lerp(c, side, blend);
     r = lerp(r, box3, subpx);
-    return float4(r, 1);
+    return float4(lerp(c, r, saturate(aaStrength)), 1);
 }
 
 // ---------------------------------------------------------------- edge-adaptive upscale
@@ -232,7 +260,7 @@ float SkinMask(float3 c)
 float3 Oled(float3 c, float3 blur)
 {
     int lv = clamp(int(oledLevel + 0.5), 0, 3);
-    if (lv == 0) return c;
+    if (lv == 0 || oledIntensity <= 0) return c;
     float a = saturate(oledIntensity);
 
     float y = max(Lum(c), 1e-5);
@@ -263,6 +291,20 @@ float4 PSFinal(VSOut i) : SV_Target
 {
     float2 p = i.pos.xy;
     int2 ip = int2(p);
+    uint previewFlags=(uint)splitFlags;
+    float axisPixel=(previewFlags & 1) ? p.y : p.x;
+    float axisExtent=(previewFlags & 1) ? outSize.y : outSize.x;
+    float divider=saturate(splitPosition)*axisExtent;
+    if (splitPreview > 0.5 && (previewFlags & 4) && splitPosition>0 && splitPosition<1 && floor(axisPixel)==floor(divider))
+        return float4(0.15,0.65,1.0,1.0);
+    bool firstSide=axisPixel<divider;
+    bool originalSide=(previewFlags & 2) ? !firstSide : firstSide;
+    if (splitPreview > 0.5 && originalSide)
+    {
+        float2 sourcePixel = (p - offset) / scale;
+        if (any(sourcePixel < 0) || any(sourcePixel >= srcSize)) return float4(0,0,0,1);
+        return float4(tB.SampleLevel(sLin, sourcePixel / srcSize, 0).rgb, 1);
+    }
     float3 c = LdUp(ip);
     float3 n = LdUp(ip + int2(0, -1));
     float3 s = LdUp(ip + int2(0, 1));
@@ -296,6 +338,22 @@ float4 PSFinal(VSOut i) : SV_Target
         blur += tA.SampleLevel(sLin, (p + float2(4, -4)) * ro, 0).rgb;
         blur += tA.SampleLevel(sLin, (p + float2(-4, -4)) * ro, 0).rgb;
         c = Oled(c, blur * 0.125);
+    }
+
+    // User colour controls, fused into the existing final pass.
+    float colourLuma = Lum(c);
+    c = lerp(float3(colourLuma, colourLuma, colourLuma), c, saturation);
+    c = saturate((c - 0.5) * contrast + 0.5 + brightness);
+    c = pow(c, 1.0 / max(gamma, 0.5));
+    float warmth = clamp(temperature, -1.0, 1.0);
+    c = saturate(c * float3(1.0 + 0.12 * warmth, 1.0, 1.0 - 0.12 * warmth));
+
+    // Display-referred SDR 17^3 LUT, trilinear filtering at texel centres.
+    // Applied after ordinary filters/OLED and before dither; original split bypasses it.
+    [branch] if (lookStrength > 0)
+    {
+        float3 lutUv = (saturate(c) * 16.0 + 0.5) / 17.0;
+        c = lerp(c, tColorLut.SampleLevel(sLin, lutUv, 0).rgb, saturate(lookStrength));
     }
 
     // Triangular dither before the 8-bit back buffer: removes banding in gradients.

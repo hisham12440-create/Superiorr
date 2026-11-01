@@ -11,6 +11,8 @@ constexpr size_t kMaxBundleBytes=64*1024;
 nlohmann::json ImageSettings(const Settings& s) {
     auto j=nlohmann::json::parse(ToJson(s));
     // Never transfer machine-local preferences, key bindings or identity.
+    // Local comparison layout is not an artistic image/session preset.
+    j.erase("preview_position"); j.erase("preview_axis"); j.erase("preview_reverse"); j.erase("preview_line");
     j.erase("language"); j.erase("hotkeys"); j.erase("auto_profiles");
     return j;
 }

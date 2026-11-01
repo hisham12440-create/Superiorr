@@ -2,6 +2,7 @@
 #include "files.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 
 #include <nlohmann/json.hpp>
@@ -19,6 +20,8 @@ void Settings::Clamp() {
     saturation = std::min(2.0f, std::max(0.0f, saturation));
     brightness = std::min(0.25f, std::max(-0.25f, brightness));
     gamma = std::min(2.0f, std::max(0.5f, gamma));
+    previewPosition = std::isfinite(previewPosition) ? std::clamp(previewPosition,0.f,1.f) : .5f;
+    previewAxis = std::clamp(previewAxis,0,1);
     colorLook = std::clamp(colorLook, 0, 4);
     colorLookStrength = std::clamp(colorLookStrength, 0.0f, 1.0f);
     aaStrength = std::clamp(aaStrength, 0.0f, 1.0f);
@@ -48,6 +51,10 @@ std::string ToJson(const Settings& s) {
     j["saturation"] = s.saturation;
     j["brightness"] = s.brightness;
     j["gamma"] = s.gamma;
+    j["preview_position"] = s.previewPosition;
+    j["preview_axis"] = s.previewAxis;
+    j["preview_reverse"] = s.previewReverse;
+    j["preview_line"] = s.previewLine;
     j["split_preview"] = s.splitPreview;
     j["comfort_mode"] = s.comfortMode;
     j["language"] = s.language;
@@ -95,6 +102,10 @@ bool FromJson(const std::string& text, Settings& out) {
         s.saturation = j.value("saturation", s.saturation);
         s.brightness = j.value("brightness", s.brightness);
         s.gamma = j.value("gamma", s.gamma);
+        s.previewPosition = j.value("preview_position",s.previewPosition);
+        s.previewAxis = j.value("preview_axis",s.previewAxis);
+        s.previewReverse = j.value("preview_reverse",s.previewReverse);
+        s.previewLine = j.value("preview_line",s.previewLine);
         s.splitPreview = j.value("split_preview", s.splitPreview);
         s.comfortMode = j.value("comfort_mode", s.comfortMode);
         s.language = j.value("language", s.language);

@@ -9,6 +9,7 @@
 #include <memory>
 #include <filesystem>
 #include "core/config.h"
+#include "core/image_comparison.h"
 #include "hardware/monitor.h"
 #include "present/session_stats.h"
 namespace superior {
@@ -36,6 +37,9 @@ private:
     void DrawSettingsTransfer(bool running);
     void ChooseSettingsBundle(bool importing);
     std::string transferStatus_;
+    bool DrawComparison();
+    ImageComparisonSlots comparisonSlots_;
+    std::string comparisonStatus_;
     bool DrawFilters();
     bool DrawOled();
     int page_ = 0;

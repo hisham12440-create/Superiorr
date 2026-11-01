@@ -6,7 +6,7 @@ namespace superior {
 bool Panel::DrawFilters() {
     bool changed = false;
     localized::TextWrapped("Eight independent filters. Bypass keeps your saved slider values.");
-    changed |= localized::Checkbox("Before / after split (left is original)", &settings_->splitPreview);
+    changed |= DrawComparison();
     const char* names[] = {"Clean", "Vivid", "Cinematic", "Competitive"};
     if (localized::BeginCombo("Apply image preset", "Choose preset")) {
         for (int i=0;i<4;++i) if (localized::Selectable(names[i])) {

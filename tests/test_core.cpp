@@ -914,3 +914,92 @@ TEST(ColorLut, ImagePresetsPreserveIndependentLookSettings) {
         EXPECT_EQ(s.colorLook,2); EXPECT_FLOAT_EQ(s.colorLookStrength,.35f); EXPECT_FALSE(s.colorLookEnabled);
     }
 }
+
+#include "core/image_comparison.h"
+TEST(Comparison, VerticalHorizontalReverseAndDisabledRegions) {
+    Settings s; s.splitPreview=true; s.previewPosition=.3f;
+    EXPECT_TRUE(PreviewOriginalAt(s,.2f,.8f)); EXPECT_FALSE(PreviewOriginalAt(s,.4f,.1f));
+    EXPECT_FALSE(PreviewOriginalAt(s,.3f,.1f));
+    s.previewAxis=1;
+    EXPECT_FALSE(PreviewOriginalAt(s,.2f,.8f)); EXPECT_TRUE(PreviewOriginalAt(s,.4f,.1f));
+    s.previewReverse=true;
+    EXPECT_TRUE(PreviewOriginalAt(s,.2f,.8f)); EXPECT_FALSE(PreviewOriginalAt(s,.4f,.1f));
+    s.splitPreview=false; EXPECT_FALSE(PreviewOriginalAt(s,.9f,.9f));
+}
+TEST(Comparison, EndpointPositionsSelectWholeImage) {
+    Settings s; s.splitPreview=true; s.previewPosition=0;
+    EXPECT_FALSE(PreviewOriginalAt(s,.001f,.5f)); EXPECT_FALSE(PreviewOriginalAt(s,.999f,.5f));
+    s.previewPosition=1;
+    EXPECT_TRUE(PreviewOriginalAt(s,.001f,.5f)); EXPECT_TRUE(PreviewOriginalAt(s,.999f,.5f));
+    s.previewReverse=true; EXPECT_FALSE(PreviewOriginalAt(s,.5f,.5f));
+}
+TEST(Comparison, LayoutClampRoundTripAndLegacyDefaults) {
+    Settings s;
+    ASSERT_TRUE(FromJson(R"({"preview_position":9,"preview_axis":5,"preview_reverse":true,"preview_line":false})",s));
+    EXPECT_FLOAT_EQ(s.previewPosition,1); EXPECT_EQ(s.previewAxis,1); EXPECT_TRUE(s.previewReverse); EXPECT_FALSE(s.previewLine);
+    Settings copy; ASSERT_TRUE(FromJson(ToJson(s),copy));
+    EXPECT_FLOAT_EQ(copy.previewPosition,1); EXPECT_EQ(copy.previewAxis,1); EXPECT_TRUE(copy.previewReverse); EXPECT_FALSE(copy.previewLine);
+    s.previewPosition=std::numeric_limits<float>::quiet_NaN(); s.Clamp(); EXPECT_FLOAT_EQ(s.previewPosition,.5f);
+    Settings legacy; ASSERT_TRUE(FromJson("{}",legacy));
+    EXPECT_FLOAT_EQ(legacy.previewPosition,.5f); EXPECT_EQ(legacy.previewAxis,0); EXPECT_FALSE(legacy.previewReverse); EXPECT_TRUE(legacy.previewLine);
+}
+TEST(Comparison, SlotsAreIndependentCopiesAndEmptySlotsNeverMutateSettings) {
+    ImageComparisonSlots slots; Settings source,destination;
+    const auto original=ToJson(destination);
+    EXPECT_FALSE(slots.Apply(0,destination)); EXPECT_EQ(ToJson(destination),original);
+    source.contrast=1.6f; source.colorLook=3; source.oledLevel=2;
+    ASSERT_TRUE(slots.Capture(0,source)); source.contrast=.6f;
+    ASSERT_TRUE(slots.Capture(1,source)); source.contrast=1;
+    ASSERT_TRUE(slots.Apply(0,destination)); EXPECT_FLOAT_EQ(destination.contrast,1.6f);
+    EXPECT_EQ(destination.colorLook,3); EXPECT_EQ(destination.oledLevel,2);
+    ASSERT_TRUE(slots.Apply(1,destination)); EXPECT_FLOAT_EQ(destination.contrast,.6f);
+    EXPECT_FALSE(slots.Capture(2,source)); EXPECT_FALSE(slots.Has(2)); EXPECT_FALSE(slots.Apply(2,destination));
+    slots.Clear(); EXPECT_FALSE(slots.Has(0)); EXPECT_FALSE(slots.Has(1));
+}
+TEST(Comparison, ApplyingSlotPreservesSessionLocalPreferencesAndPreview) {
+    ImageComparisonSlots slots; Settings source,destination;
+    source.frameGen=true; source.comfortMode=0; source.maxMultiplier=2; source.temperature=.7f; source.antiAlias=false;
+    ASSERT_TRUE(slots.Capture(0,source));
+    destination.frameGen=false; destination.comfortMode=2; destination.maxMultiplier=4;
+    destination.language="ar"; destination.autoProfiles=false; destination.splitPreview=true;
+    destination.previewPosition=.25f; destination.previewAxis=1; destination.previewReverse=true; destination.previewLine=false;
+    const auto keys=destination.hotkeys;
+    ASSERT_TRUE(slots.Apply(0,destination));
+    EXPECT_FALSE(destination.frameGen); EXPECT_EQ(destination.comfortMode,2); EXPECT_EQ(destination.maxMultiplier,4);
+    EXPECT_EQ(destination.language,"ar"); EXPECT_FALSE(destination.autoProfiles); EXPECT_TRUE(destination.splitPreview);
+    EXPECT_FLOAT_EQ(destination.previewPosition,.25f); EXPECT_EQ(destination.previewAxis,1); EXPECT_TRUE(destination.previewReverse); EXPECT_FALSE(destination.previewLine);
+    EXPECT_FLOAT_EQ(destination.temperature,.7f); EXPECT_FALSE(destination.antiAlias);
+    for(size_t i=0;i<keys.size();++i) {
+        EXPECT_EQ(destination.hotkeys[i].key,keys[i].key); EXPECT_EQ(destination.hotkeys[i].modifiers,keys[i].modifiers);
+    }
+}
+TEST(Comparison, GameSettingsCopyDoesNotReplaceLocalComparisonLayout) {
+    Settings source,destination;
+    destination.previewPosition=.8f; destination.previewAxis=1; destination.previewReverse=true; destination.previewLine=false;
+    CopyGameSettings(destination,source);
+    EXPECT_FLOAT_EQ(destination.previewPosition,.8f); EXPECT_EQ(destination.previewAxis,1);
+    EXPECT_TRUE(destination.previewReverse); EXPECT_FALSE(destination.previewLine);
+}
+TEST(Bundle, ComparisonLayoutStaysLocalWithoutChangingV2Schema) {
+    Settings source,destination; source.previewPosition=.1f; source.previewAxis=1;
+    destination.previewPosition=.7f; destination.previewReverse=true; destination.previewLine=false;
+    const auto text=ExportSettingsBundle(source);
+    const auto values=nlohmann::json::parse(text).at("settings");
+    EXPECT_FALSE(values.contains("preview_position")); EXPECT_FALSE(values.contains("preview_axis"));
+    EXPECT_FALSE(values.contains("preview_reverse")); EXPECT_FALSE(values.contains("preview_line"));
+    std::string error; ASSERT_TRUE(ImportSettingsBundle(text,destination,error));
+    EXPECT_FLOAT_EQ(destination.previewPosition,.7f); EXPECT_EQ(destination.previewAxis,0);
+    EXPECT_TRUE(destination.previewReverse); EXPECT_FALSE(destination.previewLine);
+}
+
+TEST(Comparison, DividerGuideUsesExactlyOneOutputPixelAndHidesAtEndpoints) {
+    Settings s; s.splitPreview=true; s.previewPosition=.5f;
+    int count=0; for(int x=0;x<1920;++x) if(PreviewGuideAt(s,x,100,1920,1080)) ++count;
+    EXPECT_EQ(count,1); EXPECT_TRUE(PreviewGuideAt(s,960,100,1920,1080));
+    s.previewAxis=1; count=0;
+    for(int y=0;y<1080;++y) if(PreviewGuideAt(s,100,y,1920,1080)) ++count;
+    EXPECT_EQ(count,1);
+    s.previewPosition=1; EXPECT_FALSE(PreviewGuideAt(s,100,1079,1920,1080));
+    s.previewPosition=0; EXPECT_FALSE(PreviewGuideAt(s,100,0,1920,1080));
+    s.previewPosition=.5f; s.previewLine=false; EXPECT_FALSE(PreviewGuideAt(s,100,540,1920,1080));
+}

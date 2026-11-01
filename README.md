@@ -392,3 +392,26 @@ configuration/profile persistence and v1 migration; shader compilation is checke
 in Windows CI. GPU/reference image equivalence and artistic appearance are **not**
 validated by these CPU tests. These are SDR artistic transforms, not HDR conversion,
 monitor calibration, external `.cube` importing, neural enhancement or temporal SR.
+
+### Expansion 3: comparison lab and in-memory A/B settings
+
+Open **Image filters → Comparison lab** to enable a movable vertical or horizontal
+before/after divider, reverse the original side, show/hide the one-pixel guide, or
+centre the divider. Positions 0 and 1 select a whole side without a guide. The
+original region still uses the **latest captured real source**, with basic scaling:
+it is not synchronized ground truth for generated frames. Motion may differ in time.
+This is a manual visual tool, not an image-quality score or latency measurement.
+
+**Store current as A/B** takes independent in-memory snapshots of image controls,
+including AA, OLED and LUT. **Apply A/B** changes current image controls only, leaving
+frame-generation policy, multiplier, mode, language, shortcuts and comparison layout
+alone. Applying while a game profile is active follows the same save behavior as
+normal image edits. Storing does not apply or save; slots survive game changes only
+until the application exits and are not frozen images or automatic alternation.
+
+Divider preferences persist in the local config, but game settings and shared
+bundles do not replace them. The bundle schema remains v2 (v1 import supported).
+No new GPU textures, readbacks or render passes are added for comparison controls.
+CPU tests cover side selection, endpoints, settings bounds, A/B isolation and local
+preference preservation. Hardware image output, guide thickness at different DPI,
+Arabic layout and generated/real temporal differences still need manual validation.

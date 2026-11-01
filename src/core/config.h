@@ -31,7 +31,11 @@ struct Settings {
     float saturation = 1.0f;     // 0..2
     float brightness = 0.0f;     // -0.25..0.25
     float gamma = 1.0f;          // 0.5..2
-    bool splitPreview = false;  // left: basic source, right: enhanced
+    bool splitPreview = false;
+    float previewPosition = .5f; // local comparison preferences, not game settings
+    int previewAxis = 0;         // 0 vertical divider, 1 horizontal divider
+    bool previewReverse = false;
+    bool previewLine = true;
     float vibrance = 0.25f;        // 0..1
 
     // Forces every field into its valid range.

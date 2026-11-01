@@ -4,7 +4,7 @@
 #include <iomanip>
 #include <sstream>
 namespace superior {
-void CopyGameSettings(Settings& d, const Settings& s) {
+void CopyImageSettings(Settings& d, const Settings& s) {
     d.sharpnessEnabled = s.sharpnessEnabled;
     d.contrastEnabled = s.contrastEnabled;
     d.saturationEnabled = s.saturationEnabled;
@@ -17,11 +17,15 @@ void CopyGameSettings(Settings& d, const Settings& s) {
     d.colorLookEnabled = s.colorLookEnabled;
     d.colorLookStrength = s.colorLookStrength;
     d.temperature = s.temperature;
-    d.maxMultiplier = s.maxMultiplier;
-    d.comfortMode = s.comfortMode; d.frameGen = s.frameGen; d.antiAlias = s.antiAlias;
+    d.antiAlias = s.antiAlias;
     d.sharpness = s.sharpness; d.vibrance = s.vibrance; d.oledLevel = s.oledLevel;
     d.oledIntensity = s.oledIntensity; d.contrast = s.contrast; d.saturation = s.saturation;
     d.brightness = s.brightness; d.gamma = s.gamma;
+    d.Clamp();
+}
+void CopyGameSettings(Settings& d, const Settings& s) {
+    CopyImageSettings(d,s);
+    d.maxMultiplier=s.maxMultiplier; d.comfortMode=s.comfortMode; d.frameGen=s.frameGen;
     d.Clamp();
 }
 std::string ProfileKey(const std::string& executable) {

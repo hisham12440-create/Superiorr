@@ -32,7 +32,7 @@ struct RenderCb {
     float offX, offY, scale, frame;
     float sharp, oledLevel, oledIntensity, vibrance;
     float contrast, saturation, brightness, gamma;
-    float splitPreview, phase, pad1, pad2;
+    float splitPreview, phase, splitPosition, splitFlags;
     float temperature, aaStrength, lookStrength, pad4;
 };
 static_assert(sizeof(RenderCb) == 96, "constant buffer layout");
@@ -412,6 +412,8 @@ PresentResult Renderer::PresentFinal(Src s, const Settings& st, float phase) {
     cb.temperature = parameters.temperature;
     cb.aaStrength = parameters.aaStrength;
     cb.splitPreview = st.splitPreview ? 1.0f : 0.0f;
+    cb.splitPosition=st.previewPosition;
+    cb.splitFlags=static_cast<float>((st.previewAxis==1 ? 1 : 0) | (st.previewReverse ? 2 : 0) | (st.previewLine ? 4 : 0));
     UpdateCb(cbRender_.Get(), &cb, sizeof cb);
 
     ID3D11ShaderResourceView* src = (s == Src::Mid) ? mid_.srv.Get() : cur_.srv.Get();

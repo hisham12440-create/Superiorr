@@ -27,7 +27,8 @@ cbuffer CB : register(b0)
     float gamma;
     float splitPreview;
     float phase;
-    float2 cbPadding;
+    float splitPosition;
+    float splitFlags;
     float temperature;
     float aaStrength;
     float lookStrength;
@@ -290,7 +291,15 @@ float4 PSFinal(VSOut i) : SV_Target
 {
     float2 p = i.pos.xy;
     int2 ip = int2(p);
-    if (splitPreview > 0.5 && p.x < outSize.x * 0.5)
+    uint previewFlags=(uint)splitFlags;
+    float axisPixel=(previewFlags & 1) ? p.y : p.x;
+    float axisExtent=(previewFlags & 1) ? outSize.y : outSize.x;
+    float divider=saturate(splitPosition)*axisExtent;
+    if (splitPreview > 0.5 && (previewFlags & 4) && splitPosition>0 && splitPosition<1 && floor(axisPixel)==floor(divider))
+        return float4(0.15,0.65,1.0,1.0);
+    bool firstSide=axisPixel<divider;
+    bool originalSide=(previewFlags & 2) ? !firstSide : firstSide;
+    if (splitPreview > 0.5 && originalSide)
     {
         float2 sourcePixel = (p - offset) / scale;
         if (any(sourcePixel < 0) || any(sourcePixel >= srcSize)) return float4(0,0,0,1);

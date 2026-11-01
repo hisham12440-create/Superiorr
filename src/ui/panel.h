@@ -19,6 +19,7 @@ class Panel {
 public:
     void Open(HINSTANCE instance, ID3D11Device* device, Settings* settings,
               std::function<void()> save, ApplyHotkeys applyHotkeys);
+    void SetPerformanceHistory(const PerformanceHistory& history,double nowMs) { performance_=history; performanceNow_=nowMs; }
     void SetCaptureDiagnostics(std::optional<bool> supported,bool active) { captureSupported_=supported; captureActive_=active; }
     void SetFailureStage(FailureStage stage) { lastFailure_=stage; }
     void SetSessionSnapshot(const present::SessionSnapshot& snapshot) { session_ = snapshot; }
@@ -36,6 +37,9 @@ private:
         std::atomic<bool> cancel{false};
         std::atomic<size_t> completed{0}, total{0};
     };
+    void DrawPerformance();
+    PerformanceHistory performance_;
+    double performanceNow_=0;
     void DrawDiagnostics(bool running,bool paused,const hardware::Snapshot& hardware,bool safeMode);
     void ExportDiagnostics(const DiagnosticsSnapshot& snapshot,DiagnosticOptions options);
     std::optional<bool> captureSupported_;

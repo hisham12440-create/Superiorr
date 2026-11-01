@@ -7,6 +7,7 @@
 #include <array>
 #include <optional>
 #include <string>
+#include "core/performance_history.h"
 
 #include "core/config.h"
 
@@ -41,8 +42,15 @@ public:
     int FramesHeld() const { return frames_ < 2 ? frames_ : 2; }
 
     void ComputeFlow();
-    std::optional<double> PollGpuTime();
-    void BeginGpuTiming();
+    struct TimingBatch {
+        std::array<GpuSample,6> values{};
+        size_t count=0;
+        auto begin() { return values.begin(); }
+        auto end() { return values.begin()+count; }
+    };
+    TimingBatch PollGpuTimes();
+    void StartTimingEpoch() { ++timingEpoch_; }
+    void BeginGpuTiming(GpuScope scope);
     void EndGpuTiming();
     void RenderMid(float phase);
     PresentResult PresentFinal(Src s, const Settings& st, float phase = .5f);
@@ -60,10 +68,13 @@ private:
     struct TimingSlot {
         ComPtr<ID3D11Query> disjoint, start, end;
         bool pending = false;
+        uint64_t epoch=0, sequence=0;
+        GpuScope scope=GpuScope::CaptureProcessing;
     };
     std::array<TimingSlot, 6> timings_;
     int activeTiming_ = -1;
     bool timingAvailable_ = false;
+    uint64_t timingEpoch_=0, timingSequence_=0;
     ComPtr<ID3D11Device> dev_;
     ComPtr<ID3D11DeviceContext> ctx_;
     std::wstring adapterName_;

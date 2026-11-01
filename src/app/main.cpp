@@ -237,6 +237,8 @@ void StartSession(HWND target) {
         SetLayeredWindowAttributes(g.overlay, 0, 255, LWA_ALPHA);
         ShowWindow(g.overlay, SW_SHOWNOACTIVATE);
 
+        g.gfx.StartTimingEpoch();
+        g.monitor.ResetTimings();
         g.gfx.CreateOutput(g.overlay, w, h);
         std::string err;
         if (!g.cap.Start(target, g.gfx.Device(), g.frameEvent.Get(), err)) {
@@ -277,7 +279,7 @@ void OnFrame(ID3D11Texture2D* tex, UINT w, UINT h) {
     ++g.framesRecv;
 
     DiscardPending((g.srcW && (g.srcW != w || g.srcH != h)) ? present::DropReason::Resize : present::DropReason::NewCapture);
-    g.gfx.BeginGpuTiming();
+    g.gfx.BeginGpuTiming(GpuScope::CaptureProcessing);
     g.gfx.PushFrame(tex, w, h);
     g.srcW = w;
     g.srcH = h;
@@ -604,7 +606,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         }
         if (!quit) {
             try {
-                if (auto time = g.gfx.PollGpuTime()) g.monitor.RecordGpuTime(*time);
+                const double collectedMs=NowMs();
+                for(const auto& sample:g.gfx.PollGpuTimes()) g.monitor.RecordGpuTime(sample,collectedMs);
+                g.panel.SetPerformanceHistory(g.monitor.History(),collectedMs);
                 g.monitor.Poll(NowMs(), static_cast<hardware::Mode>(g.st.comfortMode), g.displayIntervalMs);
                 g.panel.SetCaptureDiagnostics(captureSupported,g.cap.Active());
                 g.panel.SetSessionSnapshot(g.session.Snapshot(NowMs()));

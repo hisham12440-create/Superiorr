@@ -1073,3 +1073,57 @@ TEST_F(StorageTest, DiagnosticReportSaveIsReadableAndFailuresAreReported) {
     EXPECT_EQ(nlohmann::json::parse(text)["gpu"]["adapter"],"Synthetic test adapter");
     EXPECT_FALSE(SaveDiagnosticsReport(directory/"missing"/"diagnostics.json",snapshot));
 }
+
+TEST(Performance, EmptyHistoryIsUnavailableAndInvalidSamplesDoNotCreateData) {
+    PerformanceHistory history;
+    EXPECT_FALSE(history.Describe(GpuScope::CaptureProcessing,0));
+    EXPECT_FALSE(history.Add({0,GpuScope::CaptureProcessing,1},0));
+    EXPECT_FALSE(history.Add({1,GpuScope::CaptureProcessing,-1},0));
+    EXPECT_FALSE(history.Add({1,GpuScope::CaptureProcessing,std::numeric_limits<double>::infinity()},0));
+    EXPECT_FALSE(history.Add({1,static_cast<GpuScope>(3),1},0));
+    EXPECT_EQ(history.Count(GpuScope::CaptureProcessing),0u);
+}
+TEST(Performance, ScopeWindowsRemainSeparateAndPercentileUsesNearestRank) {
+    PerformanceHistory history;
+    for(uint64_t i=1;i<=20;++i) ASSERT_TRUE(history.Add({i,GpuScope::CaptureProcessing,double(i)},double(i)));
+    ASSERT_TRUE(history.Add({21,GpuScope::FinalRendering,100},21));
+    const auto processing=history.Describe(GpuScope::CaptureProcessing,100);
+    ASSERT_TRUE(processing); EXPECT_EQ(processing->count,20u); EXPECT_DOUBLE_EQ(processing->mean,10.5);
+    EXPECT_DOUBLE_EQ(processing->p95,19); EXPECT_DOUBLE_EQ(processing->maximum,20); EXPECT_DOUBLE_EQ(processing->ageMs,80);
+    const auto final=history.Describe(GpuScope::FinalRendering,100);
+    ASSERT_TRUE(final); EXPECT_EQ(final->count,1u); EXPECT_DOUBLE_EQ(final->mean,100);
+}
+TEST(Performance, RingIsBoundedAndReturnsChronologicalWindow) {
+    PerformanceHistory history;
+    for(uint64_t i=1;i<=300;++i) ASSERT_TRUE(history.Add({i,GpuScope::FinalRendering,double(i)},double(i)));
+    EXPECT_EQ(history.Count(GpuScope::FinalRendering),PerformanceHistory::Capacity);
+    EXPECT_EQ(history.At(GpuScope::FinalRendering,0).sequence,173u);
+    EXPECT_EQ(history.At(GpuScope::FinalRendering,127).sequence,300u);
+    const auto summary=history.Describe(GpuScope::FinalRendering,300);
+    ASSERT_TRUE(summary); EXPECT_DOUBLE_EQ(summary->mean,236.5); EXPECT_DOUBLE_EQ(summary->maximum,300);
+}
+TEST(Performance, AgeIsCollectionAgeAndStaleAfterTwoSeconds) {
+    PerformanceHistory history; ASSERT_TRUE(history.Add({1,GpuScope::CaptureProcessing,0},100));
+    EXPECT_FALSE(history.Describe(GpuScope::CaptureProcessing,2100)->stale);
+    EXPECT_TRUE(history.Describe(GpuScope::CaptureProcessing,2101)->stale);
+    EXPECT_DOUBLE_EQ(history.Describe(GpuScope::CaptureProcessing,50)->ageMs,0);
+    EXPECT_FALSE(history.Describe(GpuScope::CaptureProcessing,std::numeric_limits<double>::quiet_NaN()));
+}
+TEST(Performance, OutOfOrderSequenceAndRegressingClockAreRejectedWithoutMutation) {
+    PerformanceHistory history; ASSERT_TRUE(history.Add({2,GpuScope::CaptureProcessing,3},100));
+    EXPECT_FALSE(history.Add({1,GpuScope::FinalRendering,9},101));
+    EXPECT_FALSE(history.Add({3,GpuScope::FinalRendering,9},99));
+    EXPECT_EQ(history.Count(GpuScope::FinalRendering),0u);
+    history.Clear(); EXPECT_EQ(history.Count(GpuScope::CaptureProcessing),0u);
+    EXPECT_TRUE(history.Add({1,GpuScope::FinalRendering,1},0));
+}
+TEST(Diagnostics, ReportIncludesIndependentGpuWindowsWithExplicitAgeAndStaleness) {
+    DiagnosticsSnapshot snapshot; snapshot.collectedNowMs=4000;
+    ASSERT_TRUE(snapshot.performance.Add({1,GpuScope::CaptureProcessing,3},1000));
+    const auto report=nlohmann::json::parse(DiagnosticsJson(snapshot));
+    const auto& windows=report["gpu_group_sample_windows"];
+    EXPECT_TRUE(windows["final_rendering"].is_null());
+    EXPECT_EQ(windows["capture_processing"]["samples"],1);
+    EXPECT_EQ(windows["capture_processing"]["collected_age_ms"],3000);
+    EXPECT_EQ(windows["capture_processing"]["stale"],true);
+}

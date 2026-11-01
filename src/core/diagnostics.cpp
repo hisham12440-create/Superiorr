@@ -33,6 +33,13 @@ std::string DiagnosticsJson(const DiagnosticsSnapshot& s,DiagnosticOptions optio
         try { session=json::parse(present::SessionJson(s.session)); sessionStatus="included"; }
         catch(const std::invalid_argument&) { sessionStatus="invalid_snapshot_omitted"; }
     }
+    json windows=json::object();
+    for(int index=0;index<2;++index) {
+        const auto summary=s.performance.Describe(static_cast<GpuScope>(index),s.collectedNowMs);
+        const char* key=index==0 ? "capture_processing" : "final_rendering";
+        windows[key]=summary ? json{{"samples",summary->count},{"mean_ms",summary->mean},{"p95_ms",summary->p95},
+            {"maximum_ms",summary->maximum},{"collected_age_ms",summary->ageMs},{"stale",summary->stale}} : json(nullptr);
+    }
     json result={
         {"format","superior-diagnostics"},{"schema",1},{"build_revision",BuildRevision()},
         {"privacy",{{"contains_images",false},{"contains_game_paths",false},{"contains_logs",false},{"uploaded_automatically",false}}},
@@ -45,6 +52,7 @@ std::string DiagnosticsJson(const DiagnosticsSnapshot& s,DiagnosticOptions optio
             {"process_local_usage_bytes",Value(s.usageBytes)},{"local_budget_bytes",Value(s.budgetBytes)},
             {"extra_allowance_policy_bytes",Value(s.allowanceBytes)},{"last_completed_group_ms",groupMs},
             {"driver_version",nullptr},{"whole_frame_gpu_ms",nullptr},{"temperature_c",nullptr},{"watts",nullptr}}},
+        {"gpu_group_sample_windows",windows},
         {"power",{{"on_battery",Value(s.onBattery)},{"battery_saver",Value(s.batterySaver)}}},
         {"settings_bundle",options.includeSettings ? json::parse(ExportSettingsBundle(s.settings)) : json(nullptr)},
         {"session_status",sessionStatus},{"session",session},

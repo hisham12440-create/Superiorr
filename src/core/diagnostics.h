@@ -1,5 +1,6 @@
 #pragma once
 #include "core/config.h"
+#include "core/performance_history.h"
 #include "present/session_stats.h"
 #include <optional>
 #include <filesystem>
@@ -15,6 +16,8 @@ struct DiagnosticsSnapshot {
     uint32_t featureLevel=0;
     bool running=false, paused=false, captureActive=false, safeMode=false, generationAllowed=false;
     FailureStage lastFailure=FailureStage::None;
+    PerformanceHistory performance;
+    double collectedNowMs=0;
     Settings settings;
     present::SessionSnapshot session;
 };

@@ -19,6 +19,19 @@ std::unordered_map<std::string, Image> cache;
 size_t cachedBytes=0;
 std::vector<ComPtr<ID3D11ShaderResourceView>> frameReferences;
 const std::unordered_map<std::string, std::string> translations = {
+    {"Performance","الأداء"},
+    {"Nonblocking GPU timestamp observations. Each graph holds at most 128 completed query samples; the horizontal axis is sample order, not seconds or frames.","قياسات زمن GPU دون انتظار حاجز. يحتفظ كل رسم بآخر 128 عينة مكتملة كحد أقصى؛ المحور الأفقي ترتيب العينات وليس ثواني أو إطارات."},
+    {"Capture processing covers source copy and optional flow. Final rendering covers optional midpoint generation, AA, upscale and final color rendering, excluding Present and scan-out. Do not sum percentiles or convert these values to FPS.","معالجة الالتقاط تشمل نسخ المصدر والتدفق الاختياري. الرسم النهائي يشمل التوليد الوسطي الاختياري وتنعيم الحواف والتكبير والألوان، دون Present أو العرض الفعلي. لا تجمع القيم المئينية ولا تحوّلها إلى معدل إطارات."},
+    {"Capture processing group","مجموعة معالجة الالتقاط"},
+    {"Final rendering group","مجموعة الرسم النهائي"},
+    {"No completed samples for this group","لا توجد عينات مكتملة لهذه المجموعة"},
+    {"Samples %u | Mean %.2f ms | P95 %.2f ms | Max %.2f ms","عينات %u | المتوسط %.2f مللي ث | P95 %.2f مللي ث | الأقصى %.2f مللي ث"},
+    {"Last sample collected %.2f seconds ago","جُمعت آخر عينة قبل %.2f ثانية"},
+    {"STALE: historical samples, not current GPU load","قديمة: عينات تاريخية وليست حمل GPU الحالي"},
+    {"Age starts when the CPU collects a completed query, not when the GPU finished. Samples older than 2 seconds are marked stale. Query-ring pressure, disjoint clocks and failed queries can leave gaps.","العمر يبدأ عند جمع CPU للاستعلام المكتمل، لا عند انتهاء GPU. العينات الأقدم من ثانيتين توسم قديمة. ضغط حلقة الاستعلام وتغير الساعة وفشل الاستعلام قد تترك فجوات."},
+    {"History resets when a new capture session starts. Previous-session pending queries are excluded. Stopping capture retains history for inspection; this does not prove current device performance.","يصفّر السجل عند بدء جلسة التقاط جديدة وتستبعد استعلامات الجلسة السابقة. الإيقاف يحتفظ بالسجل للمراجعة؛ لا يثبت أداء الجهاز الحالي."},
+    {"Open diagnostics report","فتح تقرير التشخيص"},
+
     {"Diagnostics","التشخيص"},
     {"Local diagnostics only. No report is uploaded automatically. Adapter identity is included; game paths, screenshots and raw logs are excluded.","تشخيص محلي فقط. لا يتم رفع التقرير تلقائياً. يتضمن هوية محول الرسوم ويستبعد مسارات الألعاب والصور والسجلات الخام."},
     {"Build revision: %s","نسخة البناء: %s"},

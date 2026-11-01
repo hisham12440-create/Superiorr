@@ -16,6 +16,7 @@ void Panel::DrawDiagnostics(bool running,bool paused,const hardware::Snapshot& h
     if(hw.timingKnown) snapshot.gpuGroupMs=hw.gpuMs;
     snapshot.running=running; snapshot.paused=paused; snapshot.captureActive=captureActive_;
     snapshot.captureSupported=captureSupported_; snapshot.safeMode=safeMode; snapshot.generationAllowed=hw.allowGeneration;
+    snapshot.performance=performance_; snapshot.collectedNowMs=performanceNow_;
     snapshot.lastFailure=lastFailure_; snapshot.settings=*settings_; snapshot.session=session_;
     Microsoft::WRL::ComPtr<ID3D11Device> device;
     context_->GetDevice(&device);

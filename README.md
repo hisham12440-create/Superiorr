@@ -443,3 +443,28 @@ uses existing deferred shutdown/tool exclusion. CPU tests cover report schema,
 unknown versus false/zero, optional contents, failed timing/session values and file
 I/O. Windows driver behavior, clipboard, Arabic/DPI layout, device-removal scenarios
 and shutdown during the save dialog require manual testing.
+
+### Expansion 5: bounded, scoped GPU sample history
+
+**Performance** now graphs separate capture-processing and final-rendering query
+windows (128 accepted samples each), with sample count, mean, nearest-rank P95,
+maximum and age since CPU collection. Graph X is **sample order**, not seconds.
+Capture processing includes source copy and optional optical flow; final rendering
+includes optional midpoint rendering, AA, upscale and final color, but **not**
+Present, scan-out or game rendering. These are not full-frame timings, FPS or
+end-to-end latency. Never add the percentiles of different groups.
+
+Queries use `DONOTFLUSH` without CPU waiting. A fixed-size return batch preserves
+all valid completed samples found in one poll, rather than reducing them to one
+unlabelled maximum. Samples carry scope, sequence and session epoch; old-session,
+failed/disjoint and stale out-of-order results are excluded. A busy six-slot query
+ring can skip measurements. History and return storage are fixed-size; no textures
+are read back for this page. The existing governor still uses the maximum accepted
+group duration in each poll, not a new full-frame performance metric.
+
+History resets when capture starts, stays visible after stop, and is labelled stale
+when no sample has been collected for over two seconds. Collection age is **not GPU
+completion age**. Diagnostics includes per-group summary windows and staleness;
+the existing single `last_completed_group_ms` field remains a historical batch
+maximum. Timestamp availability and actual GPU costs require hardware validation;
+CPU CI covers bounded windows, scopes, ordering, percentile/mean and stale age only.

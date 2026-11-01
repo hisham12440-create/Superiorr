@@ -4,6 +4,7 @@
 #include <wrl/client.h>
 #include <string>
 #include "hardware/policy.h"
+#include "core/performance_history.h"
 namespace superior::hardware {
 struct Snapshot {
     std::string adapter;
@@ -21,12 +22,20 @@ public:
     void Init(ID3D11Device* device);
     void Poll(double nowMs, Mode requested, double displayInterval);
     const Snapshot& Data() const { return snapshot_; }
-    void RecordGpuTime(double ms) { snapshot_.gpuMs = ms; snapshot_.timingKnown = true; freshTiming_ = true; }
+    void RecordGpuTime(const GpuSample& sample,double collectedMs) {
+        if(!history_.Add(sample,collectedMs)) return;
+        pendingMaximum_=freshTiming_ ? std::max(pendingMaximum_,sample.milliseconds) : sample.milliseconds;
+        snapshot_.gpuMs=pendingMaximum_; snapshot_.timingKnown=true; freshTiming_=true;
+    }
+    const PerformanceHistory& History() const { return history_; }
+    void ResetTimings() { history_.Clear(); governor_.Reset(); freshTiming_=false; pendingMaximum_=0; snapshot_.gpuMs=0; snapshot_.timingKnown=false; }
 private:
     Microsoft::WRL::ComPtr<IDXGIAdapter3> adapter_;
     Snapshot snapshot_;
     Governor governor_;
     double nextPoll_ = 0;
     bool freshTiming_ = false;
+    double pendingMaximum_=0;
+    PerformanceHistory history_;
 };
 }

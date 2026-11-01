@@ -145,8 +145,8 @@ void Renderer::InitDevice() {
     SLOG("Device ready on %ls (feature level 0x%X)", adapterName_.c_str(), static_cast<unsigned>(got));
 }
 
-std::optional<double> Renderer::PollGpuTime() {
-    std::optional<double> result;
+Renderer::TimingBatch Renderer::PollGpuTimes() {
+    TimingBatch result;
     if (!timingAvailable_) return result;
     // Do not flush or wait: incomplete samples remain in the ring.
     for (auto& slot : timings_) {
@@ -156,19 +156,23 @@ std::optional<double> Renderer::PollGpuTime() {
         const HRESULT ready = ctx_->GetData(slot.disjoint.Get(), &disjoint, sizeof disjoint, D3D11_ASYNC_GETDATA_DONOTFLUSH);
         if (ready == S_FALSE) continue;
         if (FAILED(ready)) { slot.pending = false; continue; }
-        if (ctx_->GetData(slot.start.Get(), &start, sizeof start, D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK ||
-            ctx_->GetData(slot.end.Get(), &end, sizeof end, D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) continue;
+        const HRESULT startReady=ctx_->GetData(slot.start.Get(), &start, sizeof start, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        const HRESULT endReady=ctx_->GetData(slot.end.Get(), &end, sizeof end, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        if(FAILED(startReady) || FAILED(endReady)) { slot.pending=false; continue; }
+        if(startReady!=S_OK || endReady!=S_OK) continue;
         slot.pending = false;
-        if (!disjoint.Disjoint && disjoint.Frequency && end >= start)
-            result = std::max(result.value_or(0), 1000.0 * static_cast<double>(end - start) / static_cast<double>(disjoint.Frequency));
+        if (slot.epoch==timingEpoch_ && !disjoint.Disjoint && disjoint.Frequency && end >= start)
+            result.values[result.count++]={slot.sequence,slot.scope,1000.0*static_cast<double>(end-start)/static_cast<double>(disjoint.Frequency)};
     }
+    std::sort(result.begin(),result.end(),[](const auto& a,const auto& b){return a.sequence<b.sequence;});
     return result;
 }
-void Renderer::BeginGpuTiming() {
+void Renderer::BeginGpuTiming(GpuScope scope) {
     if (!timingAvailable_ || activeTiming_ >= 0) return;
     for (size_t i = 0; i < timings_.size(); ++i) {
         auto& slot = timings_[i];
         if (slot.pending) continue;
+        slot.scope=scope; slot.epoch=timingEpoch_; slot.sequence=++timingSequence_;
         activeTiming_ = static_cast<int>(i);
         ctx_->Begin(slot.disjoint.Get());
         ctx_->End(slot.start.Get());
@@ -386,7 +390,7 @@ void Renderer::Draw(ID3D11RenderTargetView* rtv, UINT w, UINT h, ID3D11PixelShad
 }
 
 PresentResult Renderer::PresentFinal(Src s, const Settings& st, float phase) {
-    BeginGpuTiming();
+    BeginGpuTiming(GpuScope::FinalRendering);
     if (s == Src::Mid) RenderMid(phase);
     const float scale = std::min(static_cast<float>(outW_) / srcW_, static_cast<float>(outH_) / srcH_);
     RenderCb cb{};

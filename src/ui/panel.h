@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 #include <functional>
 #include "core/config.h"
+#include "hardware/monitor.h"
 namespace superior {
 class Panel {
 public:
@@ -13,7 +14,7 @@ public:
     void Close();
     void Show();
     bool Visible() const;
-    void Draw(bool running, bool paused);
+    void Draw(bool running, bool paused, const hardware::Snapshot& hardware);
 private:
     static LRESULT CALLBACK Proc(HWND, UINT, WPARAM, LPARAM);
     HWND window_ = nullptr;

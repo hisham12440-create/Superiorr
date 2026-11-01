@@ -65,15 +65,15 @@ Builds use GitHub Actions only: push the working branch, open its **build** run,
 wait for all checks, and download the **Superior** artifact. The zip contains
 the portable executable and README. No local compilation is required. The
 Windows app uses C++20 for C++/WinRT; portable core logic uses C++17. Static CRT
-is enabled. Shader sources are embedded but still compiled at startup.
+is enabled. Application shaders are compiled by fxc during the Windows build and embedded as
+bytecode. The Dear ImGui backend still compiles its own small UI shaders at startup.
 
 ### Current scope and remaining foundation work
 
 This is a prototype foundation update, **not completion of the 13-stage plan**.
 No GPU performance, startup-time, quality or anti-cheat compatibility guarantee
 has been measured. Capture-only means no injection or hooks, not certification
-by anti-cheat vendors. Flow statistics still perform synchronous CPU readback;
-zero-readback flow needs a later GPU-side redesign.
+by anti-cheat vendors. Flow statistics now stay on the GPU (see the hardware/Comfort update below).
 
 The Control Center currently uses English. The existing Arabic tray strings
 remain available via Ctrl+Alt+L, but **full Arabic UI, bidi/contextual shaping
@@ -81,7 +81,7 @@ and font embedding are not implemented**. Hotkeys are still fixed, not user
 customizable. Monitor/DPI changes during capture require stopping and restarting.
 Exclusive fullscreen is not reliably distinguished from blocked/no-frame capture;
 the no-frame warning recommends borderless/windowed mode. The complete module
-split, robust device-loss recovery, hardware selection and comfort governor are
+split, robust device-loss recovery, game-aware hardware selection and full quality-per-millisecond governor are
 not implemented. No neural models or vendor runtimes ship with this build.
 Settings are saved beside the executable; use a writable folder. Settings writes
 now use a temporary file plus atomic replacement; write failures are reported.
@@ -97,3 +97,50 @@ now use a temporary file plus atomic replacement; write failures are reported.
 - Try 30 FPS on 60 Hz and 60 FPS on 120 Hz; report pacing and ghosting honestly.
 - Repeat on Intel/AMD/NVIDIA hardware and hybrid laptops where available.
 - Check `superior.log` after failures. Arabic-path logging remains a known gap.
+
+## Hardware / Comfort update
+
+The control panel now displays the selected adapter/vendor, dedicated/shared
+memory and heuristic memory tier. DXGI local-segment **process** usage and budget
+are polled once per second with a 400 MiB safety margin; this is not a claim to
+measure the game's complete allocation or system-wide free VRAM. Optional
+interpolation backs off when extra allowance falls below 32 MiB or the system
+reports battery / power saver. No system settings or game caps are changed.
+
+Comfort (default), Balanced and Max are saved in settings. Their provisional
+budgets are 25%, 40%, 65% of the display interval. Asynchronous D3D11 timestamp
+queries measure separate capture/flow and final-render groups (not the sum of
+all work per output interval, and not end-to-end latency). The panel reports the
+largest completed group in the latest poll; this is **not enforcement of a total
+25% GPU target**. Optional interpolation drops immediately on a measured overrun
+and recovers only after five seconds of stable sampled headroom. No completed
+query means `n/a`, not zero. Temperature, watts, clocks and ghost score remain
+`n/a`; there is no thermal prediction without a temperature source.
+
+Flow scene-cut/static counters now stay on the GPU. The midpoint shader reads
+them directly and selects the current real image on cuts/near-static pairs.
+The old synchronous staging-buffer readback has been removed. Timestamp queries
+use non-flushing readiness checks and never wait for unavailable measurements.
+This does not implement tile-level caching or eliminate the flow dispatch on
+static frames. Capture resize now drops the old surface before pool recreation.
+
+The artifact includes SHA256SUMS.txt for Superior.exe. This is an integrity
+checksum, not an Authenticode signature. These changes still require laptop
+validation: compare plugged-in vs battery behavior, inspect the measured GPU
+group time, resize capture repeatedly and test scene cuts / small HUD updates.
+
+### Status of the requested roadmap
+
+| Area | Current implementation | Not yet implemented / verified |
+|---|---|---|
+| Foundation | WinRT GPU capture, tray, blue/black ImGui, settings, CPU timing tests | Full Arabic shaping/RTL, configurable hotkeys, device-loss recovery |
+| Hardware | Adapter identity, heuristic VRAM tier, DXGI budget, battery policy | Game-render adapter detection, hybrid routing, pools, calibration, NVML/ADLX |
+| Comfort | Mode budgets, asynchronous group timing, interpolation backoff | Measured Pareto quality selection, tiles, thermal prediction |
+| Upscale | Spatial edge-adaptive upscale, sharpening, FP16 intermediate | Temporal/neural SR, history, licensed model integration |
+| Frame generation | Shader block matching, x2 midpoint, GPU cut/static fallback | Bidirectional/hierarchical flow, x3/x4, HUD masks, runtime ghost validation |
+| Filters | AA, sharpening, vibrance, OLED emulation | LUTs, full filter set, fused compute conversion, per-game presets |
+| Benchmark | CPU logic tests only | Clip recorder, real ground truth, measured 99% pass rate, exports |
+| Distribution | Windows CI portable exe/zip, SHA256 | Installer, release tags workflow, signing, safe mode |
+
+A green build validates compilation and CPU tests, not real GPU quality. None of
+the unimplemented features in this table is represented by a placeholder result.

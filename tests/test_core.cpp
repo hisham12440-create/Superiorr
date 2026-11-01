@@ -133,3 +133,59 @@ TEST(Pacing, ResetRemovesPreviousSessionHistory) {
     ema.Add(0);
     EXPECT_EQ(ema.Count(), 0);
 }
+
+#include "hardware/policy.h"
+using namespace superior::hardware;
+TEST(Hardware, TierBoundaries) {
+    EXPECT_EQ(SelectTier(0), Tier::Low);
+    EXPECT_EQ(SelectTier(4 * 1024 * MiB), Tier::Low);
+    EXPECT_EQ(SelectTier(6 * 1024 * MiB), Tier::SixGB);
+    EXPECT_EQ(SelectTier(8 * 1024 * MiB), Tier::EightGB);
+    EXPECT_EQ(SelectTier(12 * 1024 * MiB), Tier::High);
+}
+TEST(Hardware, BudgetSaturatesWithoutUnsignedUnderflow) {
+    EXPECT_EQ(AvailableBudget(100 * MiB, 200 * MiB, Tier::High), 0);
+    EXPECT_EQ(AvailableBudget(400 * MiB, 0, Tier::High), 0);
+    EXPECT_EQ(AvailableBudget(600 * MiB, 100 * MiB, Tier::High), 100 * MiB);
+    EXPECT_EQ(AvailableBudget(8000 * MiB, 0, Tier::Low), 256 * MiB);
+}
+TEST(Comfort, ModeBudgetTable) {
+    EXPECT_DOUBLE_EQ(BudgetMs(Mode::Comfort, 16), 4);
+    EXPECT_DOUBLE_EQ(BudgetMs(Mode::Balanced, 10), 4);
+    EXPECT_DOUBLE_EQ(BudgetMs(Mode::Max, 10), 6.5);
+    EXPECT_DOUBLE_EQ(BudgetMs(Mode::Max, -1), 0);
+}
+TEST(Comfort, ImmediateBackoffAndFiveSecondRecovery) {
+    Governor governor;
+    governor.Update(5, 4, 0);
+    EXPECT_FALSE(governor.Enabled());
+    governor.Update(2, 4, 100);
+    governor.Update(2, 4, 5099);
+    EXPECT_FALSE(governor.Enabled());
+    governor.Update(2, 4, 5100);
+    EXPECT_TRUE(governor.Enabled());
+    governor.Update(8, 4, 5200);
+    governor.Update(2, 4, 5300);
+    governor.Update(3, 4, 9000); // Lost stable headroom.
+    governor.Update(2, 4, 10000);
+    governor.Update(2, 4, 14999);
+    EXPECT_FALSE(governor.Enabled());
+}
+TEST(Config, ComfortModeIsPersistedAndClamped) {
+    Settings settings;
+    EXPECT_EQ(settings.comfortMode, 0);
+    EXPECT_TRUE(FromJson(R"({"comfort_mode":99})", settings));
+    EXPECT_EQ(settings.comfortMode, 2);
+    Settings roundTrip;
+    EXPECT_TRUE(FromJson(ToJson(settings), roundTrip));
+    EXPECT_EQ(roundTrip.comfortMode, 2);
+}
+TEST(Hardware, PowerPolicyNeverLoosensComfort) {
+    EXPECT_EQ(EffectiveMode(Mode::Comfort, true, false), Mode::Comfort);
+    EXPECT_EQ(EffectiveMode(Mode::Max, true, false), Mode::Balanced);
+    EXPECT_EQ(EffectiveMode(Mode::Max, false, true), Mode::Balanced);
+    EXPECT_EQ(EffectiveMode(Mode::Max, false, false), Mode::Max);
+    EXPECT_TRUE(PowerAllowsGeneration(false, false));
+    EXPECT_FALSE(PowerAllowsGeneration(true, false));
+    EXPECT_FALSE(PowerAllowsGeneration(false, true));
+}

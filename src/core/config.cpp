@@ -14,6 +14,7 @@ namespace superior {
 
 void Settings::Clamp() {
     if (language != "en" && language != "ar") language = "en";
+    comfortMode = std::min(2, std::max(0, comfortMode));
     oledLevel = std::min(3, std::max(0, oledLevel));
     oledIntensity = std::min(1.0f, std::max(0.0f, oledIntensity));
     sharpness = std::min(1.0f, std::max(0.0f, sharpness));
@@ -22,6 +23,7 @@ void Settings::Clamp() {
 
 std::string ToJson(const Settings& s) {
     nlohmann::json j;
+    j["comfort_mode"] = s.comfortMode;
     j["language"] = s.language;
     j["oled_level"] = s.oledLevel;
     j["oled_intensity"] = s.oledIntensity;
@@ -36,6 +38,7 @@ bool FromJson(const std::string& text, Settings& out) {
     try {
         nlohmann::json j = nlohmann::json::parse(text);
         Settings s = out;
+        s.comfortMode = j.value("comfort_mode", s.comfortMode);
         s.language = j.value("language", s.language);
         s.oledLevel = j.value("oled_level", s.oledLevel);
         s.oledIntensity = j.value("oled_intensity", s.oledIntensity);

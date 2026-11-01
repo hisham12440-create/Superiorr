@@ -1,6 +1,5 @@
 #include "renderer.h"
 
-#include <d3dcompiler.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -25,19 +24,6 @@ namespace {
         const HRESULT hr_ = (expr);            \
         if (FAILED(hr_)) Fail(#expr, hr_);     \
     } while (0)
-
-ComPtr<ID3DBlob> Compile(const char* src, const char* name, const char* entry, const char* target) {
-    ComPtr<ID3DBlob> code, err;
-    const HRESULT hr = D3DCompile(src, std::strlen(src), name, nullptr, nullptr, entry, target,
-                                  D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &err);
-    if (FAILED(hr)) {
-        std::string msg = err ? std::string(static_cast<const char*>(err->GetBufferPointer()), err->GetBufferSize())
-                              : std::string("unknown error");
-        SERR("Shader %s:%s failed: %s", name, entry, msg.c_str());
-        throw std::runtime_error("Shader compile failed (" + std::string(entry) + "): " + msg);
-    }
-    return code;
-}
 
 struct RenderCb {
     float srcW, srcH, outW, outH;
@@ -84,18 +70,12 @@ void Renderer::InitDevice() {
     ComPtr<ID3D11Multithread> mt;
     if (SUCCEEDED(ctx_.As(&mt))) mt->SetMultithreadProtected(TRUE);
 
-    auto vsBlob = Compile(kRenderHlsl, "render.hlsl", "VS", "vs_5_0");
-    auto psMidBlob = Compile(kRenderHlsl, "render.hlsl", "PSMid", "ps_5_0");
-    auto psAABlob = Compile(kRenderHlsl, "render.hlsl", "PSAA", "ps_5_0");
-    auto psUpBlob = Compile(kRenderHlsl, "render.hlsl", "PSUp", "ps_5_0");
-    auto psFinBlob = Compile(kRenderHlsl, "render.hlsl", "PSFinal", "ps_5_0");
-    auto csBlob = Compile(kFlowHlsl, "flow.hlsl", "CSFlow", "cs_5_0");
-    HR(dev_->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vs_));
-    HR(dev_->CreatePixelShader(psMidBlob->GetBufferPointer(), psMidBlob->GetBufferSize(), nullptr, &psMid_));
-    HR(dev_->CreatePixelShader(psAABlob->GetBufferPointer(), psAABlob->GetBufferSize(), nullptr, &psAA_));
-    HR(dev_->CreatePixelShader(psUpBlob->GetBufferPointer(), psUpBlob->GetBufferSize(), nullptr, &psUp_));
-    HR(dev_->CreatePixelShader(psFinBlob->GetBufferPointer(), psFinBlob->GetBufferSize(), nullptr, &psFinal_));
-    HR(dev_->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &csFlow_));
+    HR(dev_->CreateVertexShader(kShaderVS, sizeof kShaderVS, nullptr, &vs_));
+    HR(dev_->CreatePixelShader(kShaderPSMid, sizeof kShaderPSMid, nullptr, &psMid_));
+    HR(dev_->CreatePixelShader(kShaderPSAA, sizeof kShaderPSAA, nullptr, &psAA_));
+    HR(dev_->CreatePixelShader(kShaderPSUp, sizeof kShaderPSUp, nullptr, &psUp_));
+    HR(dev_->CreatePixelShader(kShaderPSFinal, sizeof kShaderPSFinal, nullptr, &psFinal_));
+    HR(dev_->CreateComputeShader(kShaderCSFlow, sizeof kShaderCSFlow, nullptr, &csFlow_));
 
     D3D11_SAMPLER_DESC sd{};
     sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -112,11 +92,11 @@ void Renderer::InitDevice() {
     bd2.ByteWidth = sizeof(FlowCb);
     HR(dev_->CreateBuffer(&bd2, nullptr, &cbFlow_));
 
-    // Stats buffer (3 counters) + staging copy. Only 16 bytes ever cross to the CPU.
+    // Stats stay on the GPU; midpoint shader chooses safe fallback on cuts.
     D3D11_BUFFER_DESC sb{};
     sb.ByteWidth = 16;
     sb.Usage = D3D11_USAGE_DEFAULT;
-    sb.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    sb.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
     sb.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
     sb.StructureByteStride = 4;
     HR(dev_->CreateBuffer(&sb, nullptr, &statsBuf_));
@@ -125,12 +105,62 @@ void Renderer::InitDevice() {
     ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
     ud.Buffer.NumElements = 4;
     HR(dev_->CreateUnorderedAccessView(statsBuf_.Get(), &ud, &statsUav_));
-    sb.Usage = D3D11_USAGE_STAGING;
-    sb.BindFlags = 0;
-    sb.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    HR(dev_->CreateBuffer(&sb, nullptr, &statsStaging_));
+    D3D11_SHADER_RESOURCE_VIEW_DESC statsDesc{};
+    statsDesc.Format = DXGI_FORMAT_UNKNOWN;
+    statsDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+    statsDesc.Buffer.NumElements = 4;
+    HR(dev_->CreateShaderResourceView(statsBuf_.Get(), &statsDesc, &statsSrv_));
 
+    timingAvailable_ = true;
+    for (auto& slot : timings_) {
+        D3D11_QUERY_DESC q{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
+        if (FAILED(dev_->CreateQuery(&q, &slot.disjoint))) { timingAvailable_ = false; break; }
+        q.Query = D3D11_QUERY_TIMESTAMP;
+        if (FAILED(dev_->CreateQuery(&q, &slot.start)) || FAILED(dev_->CreateQuery(&q, &slot.end))) {
+            timingAvailable_ = false;
+            break;
+        }
+    }
     SLOG("Device ready on %ls (feature level 0x%X)", adapterName_.c_str(), static_cast<unsigned>(got));
+}
+
+std::optional<double> Renderer::PollGpuTime() {
+    std::optional<double> result;
+    if (!timingAvailable_) return result;
+    // Do not flush or wait: incomplete samples remain in the ring.
+    for (auto& slot : timings_) {
+        if (!slot.pending) continue;
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint{};
+        UINT64 start = 0, end = 0;
+        const HRESULT ready = ctx_->GetData(slot.disjoint.Get(), &disjoint, sizeof disjoint, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        if (ready == S_FALSE) continue;
+        if (FAILED(ready)) { slot.pending = false; continue; }
+        if (ctx_->GetData(slot.start.Get(), &start, sizeof start, D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK ||
+            ctx_->GetData(slot.end.Get(), &end, sizeof end, D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) continue;
+        slot.pending = false;
+        if (!disjoint.Disjoint && disjoint.Frequency && end >= start)
+            result = std::max(result.value_or(0), 1000.0 * static_cast<double>(end - start) / static_cast<double>(disjoint.Frequency));
+    }
+    return result;
+}
+void Renderer::BeginGpuTiming() {
+    if (!timingAvailable_ || activeTiming_ >= 0) return;
+    for (size_t i = 0; i < timings_.size(); ++i) {
+        auto& slot = timings_[i];
+        if (slot.pending) continue;
+        activeTiming_ = static_cast<int>(i);
+        ctx_->Begin(slot.disjoint.Get());
+        ctx_->End(slot.start.Get());
+        break;
+    }
+}
+void Renderer::EndGpuTiming() {
+    if (activeTiming_ < 0) return;
+    auto& slot = timings_[static_cast<size_t>(activeTiming_)];
+    ctx_->End(slot.end.Get());
+    ctx_->End(slot.disjoint.Get());
+    slot.pending = true;
+    activeTiming_ = -1;
 }
 
 void Renderer::CreateOutput(HWND hwnd, UINT w, UINT h) {
@@ -168,6 +198,7 @@ void Renderer::CreateOutput(HWND hwnd, UINT w, UINT h) {
 }
 
 void Renderer::DestroyOutput() {
+    EndGpuTiming();
     if (ctx_) ctx_->ClearState();
     bbRtv_.Reset();
     if (waitable_) CloseHandle(waitable_);
@@ -245,7 +276,7 @@ void Renderer::UpdateCb(ID3D11Buffer* cb, const void* data, size_t bytes) {
     ctx_->Unmap(cb, 0);
 }
 
-FlowStats Renderer::ComputeFlow() {
+void Renderer::ComputeFlow() {
     FlowCb cb{static_cast<float>(srcW_), static_cast<float>(srcH_), 0, 0};
     UpdateCb(cbFlow_.Get(), &cb, sizeof cb);
 
@@ -266,16 +297,7 @@ FlowStats Renderer::ComputeFlow() {
     ID3D11ShaderResourceView* nullSrv[2] = {nullptr, nullptr};
     ctx_->CSSetShaderResources(0, 2, nullSrv);
 
-    ctx_->CopyResource(statsStaging_.Get(), statsBuf_.Get());
-    D3D11_MAPPED_SUBRESOURCE m{};
-    HR(ctx_->Map(statsStaging_.Get(), 0, D3D11_MAP_READ, 0, &m));
-    const uint32_t* p = static_cast<const uint32_t*>(m.pData);
-    FlowStats s;
-    s.badBlocks = p[0];
-    s.totalBlocks = p[1];
-    s.staticBlocks = p[2];
-    ctx_->Unmap(statsStaging_.Get(), 0);
-    return s;
+
 }
 
 void Renderer::RenderMid() {
@@ -291,16 +313,16 @@ void Renderer::RenderMid() {
     ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ctx_->VSSetShader(vs_.Get(), nullptr, 0);
     ctx_->PSSetShader(psMid_.Get(), nullptr, 0);
-    ID3D11ShaderResourceView* srvs[3] = {prev_.srv.Get(), cur_.srv.Get(), flowSrv_.Get()};
-    ctx_->PSSetShaderResources(0, 3, srvs);
+    ID3D11ShaderResourceView* srvs[4] = {prev_.srv.Get(), cur_.srv.Get(), flowSrv_.Get(), statsSrv_.Get()};
+    ctx_->PSSetShaderResources(0, 4, srvs);
     ID3D11SamplerState* smp = sampler_.Get();
     ctx_->PSSetSamplers(0, 1, &smp);
     ID3D11Buffer* cbs[1] = {cbRender_.Get()};
     ctx_->PSSetConstantBuffers(0, 1, cbs);
     ctx_->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nulls[3] = {nullptr, nullptr, nullptr};
-    ctx_->PSSetShaderResources(0, 3, nulls);
+    ID3D11ShaderResourceView* nulls[4] = {nullptr, nullptr, nullptr, nullptr};
+    ctx_->PSSetShaderResources(0, 4, nulls);
     ID3D11RenderTargetView* nullRtv = nullptr;
     ctx_->OMSetRenderTargets(1, &nullRtv, nullptr);
 }
@@ -326,6 +348,7 @@ void Renderer::Draw(ID3D11RenderTargetView* rtv, UINT w, UINT h, ID3D11PixelShad
 }
 
 void Renderer::PresentFinal(Src s, const Settings& st) {
+    BeginGpuTiming();
     const float scale = std::min(static_cast<float>(outW_) / srcW_, static_cast<float>(outH_) / srcH_);
     RenderCb cb{};
     cb.srcW = static_cast<float>(srcW_);
@@ -350,6 +373,7 @@ void Renderer::PresentFinal(Src s, const Settings& st) {
     Draw(up_.rtv.Get(), outW_, outH_, psUp_.Get(), src);
     Draw(bbRtv_.Get(), outW_, outH_, psFinal_.Get(), up_.srv.Get());
 
+    EndGpuTiming();
     const HRESULT hr = sc_->Present(1, 0);
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
         Fail("Present (GPU device lost)", dev_->GetDeviceRemovedReason());

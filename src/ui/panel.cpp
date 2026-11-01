@@ -26,7 +26,7 @@ void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, s
     if (!RegisterClassExW(&wc)) throw std::runtime_error("Cannot register settings window");
     window_ = CreateWindowExW(0, wc.lpszClassName, L"Superior | Control Center",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 780, 620, nullptr, nullptr, instance, nullptr);
+        CW_USEDEFAULT, CW_USEDEFAULT, 860, 840, nullptr, nullptr, instance, nullptr);
     if (!window_) throw std::runtime_error("Cannot create settings window");
     device->GetImmediateContext(&context_);
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi;
@@ -73,7 +73,7 @@ void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, s
 }
 void Panel::Show() { if (window_) { ShowWindow(window_, SW_SHOW); SetForegroundWindow(window_); } }
 bool Panel::Visible() const { return window_ && IsWindowVisible(window_); }
-void Panel::Draw(bool running, bool paused) {
+void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw) {
     if (!initialized_ || !Visible()) return;
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -88,7 +88,19 @@ void Panel::Draw(bool running, bool paused) {
     ImGui::Separator();
     ImGui::Text("SESSION   %s", !running ? "Ready" : paused ? "Paused - game not foreground" : "Capturing");
     ImGui::TextWrapped("Click your borderless game, then press Ctrl+Alt+S to start or stop. Close this panel to keep Superior in the tray.");
+    ImGui::SeparatorText("HARDWARE / EFFICIENCY");
+    ImGui::TextWrapped("%s | %s | Tier %s", hw.adapter.c_str(), hw.vendor.c_str(), hardware::TierName(hw.tier));
+    ImGui::Text("Dedicated %.0f MiB | Shared %.0f MiB", static_cast<double>(hw.dedicated) / hardware::MiB, static_cast<double>(hw.shared) / hardware::MiB);
+    if (hw.memoryKnown) ImGui::Text("DXGI process usage %.0f MiB | Budget %.0f MiB | Extra allowance %.0f MiB",
+        static_cast<double>(hw.usage) / hardware::MiB, static_cast<double>(hw.budget) / hardware::MiB, static_cast<double>(hw.available) / hardware::MiB);
+    else ImGui::TextDisabled("VRAM budget: n/a");
+    if (hw.timingKnown) ImGui::Text("Measured GPU group time %.2f ms | Group budget %.2f ms", hw.gpuMs, hw.targetMs);
+    else ImGui::TextDisabled("GPU render time: n/a (waiting for completed timestamp queries)");
+    ImGui::TextDisabled("Temperature / watts / clocks / ghost score: n/a");
+    ImGui::TextWrapped("%s", hw.reason.c_str());
     bool changed = false;
+    const char* modes[] = {"Comfort", "Balanced", "Max"};
+    changed |= ImGui::Combo("Operating mode", &settings_->comfortMode, modes, 3);
     changed |= ImGui::Checkbox("Frame generation x2", &settings_->frameGen);
     ImGui::SameLine(350);
     changed |= ImGui::Checkbox("Anti-aliasing", &settings_->antiAlias);

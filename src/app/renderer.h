@@ -4,6 +4,8 @@
 #include <wrl/client.h>
 
 #include <cstdint>
+#include <array>
+#include <optional>
 #include <string>
 
 #include "core/config.h"
@@ -36,7 +38,10 @@ public:
     void PushFrame(ID3D11Texture2D* src, UINT w, UINT h);
     int FramesHeld() const { return frames_ < 2 ? frames_ : 2; }
 
-    FlowStats ComputeFlow();
+    void ComputeFlow();
+    std::optional<double> PollGpuTime();
+    void BeginGpuTiming();
+    void EndGpuTiming();
     void RenderMid();
     void PresentFinal(Src s, const Settings& st);
 
@@ -50,6 +55,13 @@ private:
     void Draw(ID3D11RenderTargetView* rtv, UINT w, UINT h, ID3D11PixelShader* ps, ID3D11ShaderResourceView* srv);
     void UpdateCb(ID3D11Buffer* cb, const void* data, size_t bytes);
 
+    struct TimingSlot {
+        ComPtr<ID3D11Query> disjoint, start, end;
+        bool pending = false;
+    };
+    std::array<TimingSlot, 6> timings_;
+    int activeTiming_ = -1;
+    bool timingAvailable_ = false;
     ComPtr<ID3D11Device> dev_;
     ComPtr<ID3D11DeviceContext> ctx_;
     std::wstring adapterName_;
@@ -73,8 +85,9 @@ private:
     ComPtr<ID3D11Texture2D> flowTex_;
     ComPtr<ID3D11ShaderResourceView> flowSrv_;
     ComPtr<ID3D11UnorderedAccessView> flowUav_;
-    ComPtr<ID3D11Buffer> statsBuf_, statsStaging_;
+    ComPtr<ID3D11Buffer> statsBuf_;
     ComPtr<ID3D11UnorderedAccessView> statsUav_;
+    ComPtr<ID3D11ShaderResourceView> statsSrv_;
     UINT blocksX_ = 0, blocksY_ = 0;
 };
 

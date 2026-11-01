@@ -35,6 +35,7 @@ struct App {
     Renderer gfx;
     Capture cap;
     Panel panel;
+    hardware::Monitor monitor;
     bool paused = false;
     HANDLE frameEvent = nullptr;
     NOTIFYICONDATAW nid{};
@@ -199,27 +200,23 @@ void OnFrame(ID3D11Texture2D* tex, UINT w, UINT h) {
     g.lastFrameMs = now;
     ++g.framesRecv;
 
+    g.gfx.BeginGpuTiming();
     g.gfx.PushFrame(tex, w, h);
     g.srcW = w;
     g.srcH = h;
 
     g.queue.clear();
-    const bool canGen = g.st.frameGen && g.gfx.FramesHeld() >= 2 &&
+    const bool canGen = g.st.frameGen && g.monitor.Data().allowGeneration && g.gfx.FramesHeld() >= 2 &&
                         ShouldGenerate(g.ema.Value(), g.displayIntervalMs, g.ema.Count());
     g.genActive = false;
     if (canGen) {
-        const FlowStats fs = g.gfx.ComputeFlow();
-        if (IsStaticFrame(fs.staticBlocks, fs.totalBlocks)) {
-            g.queue.push_back(Src::Cur);
-            return;  // Preserve localized changes; skip interpolation only.
-        }
-        if (!IsSceneCut(fs.badBlocks, fs.totalBlocks)) {
-            g.gfx.RenderMid();
-            g.queue.push_back(Src::Mid);
-            g.genActive = true;
-        }
+        g.gfx.ComputeFlow();
+        g.gfx.RenderMid();
+        g.queue.push_back(Src::Mid);
+        g.genActive = true; // Shader selects the current frame on scene cuts/static pairs.
     }
     g.queue.push_back(Src::Cur);
+    g.gfx.EndGpuTiming();
 }
 
 void Tick(bool ready) {
@@ -370,6 +367,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     try {
         winrt::init_apartment();
         g.gfx.InitDevice();
+        g.monitor.Init(g.gfx.Device());
         g.panel.Open(inst, g.gfx.Device(), &g.st, SaveAndRefresh);
     } catch (const std::exception& e) {
         SERR("Init failed: %s", e.what());
@@ -432,7 +430,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         }
         if (!quit) {
             try {
-                g.panel.Draw(g.running, g.paused);
+                if (auto time = g.gfx.PollGpuTime()) g.monitor.RecordGpuTime(*time);
+                g.monitor.Poll(NowMs(), static_cast<hardware::Mode>(g.st.comfortMode), g.displayIntervalMs);
+                g.panel.Draw(g.running, g.paused, g.monitor.Data());
             } catch (const std::exception& e) {
                 SERR("UI error: %s", e.what());
                 g.panel.Close();

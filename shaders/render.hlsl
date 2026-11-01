@@ -5,6 +5,7 @@
 Texture2D<float4> tA : register(t0);   // PSMid: previous frame   | PSFinal: frame to display
 Texture2D<float4> tB : register(t1);   // PSMid: current frame
 Texture2D<float4> tFlow : register(t2);
+StructuredBuffer<uint> tStats : register(t3);
 SamplerState sLin : register(s0);
 
 cbuffer CB : register(b0)
@@ -39,6 +40,11 @@ static const float3 kLuma = float3(0.299, 0.587, 0.114);
 
 float4 PSMid(VSOut i) : SV_Target
 {
+    // GPU-only scene-cut / near-static fallback. Never discard localized changes.
+    uint total = tStats[1];
+    if (total == 0 || float(tStats[0]) / float(total) > 0.55 ||
+        float(tStats[2]) / float(total) >= 0.995)
+        return float4(tB.SampleLevel(sLin, i.pos.xy / srcSize, 0).rgb, 1);
     float2 pc = i.pos.xy;
     int2 ip = int2(pc);
     int2 blk = ip / 16;

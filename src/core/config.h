@@ -5,6 +5,7 @@ namespace superior {
 
 struct Settings {
     std::string language = "en";   // "en" or "ar"
+    int comfortMode = 0;          // 0 Comfort, 1 Balanced, 2 Max
     int oledLevel = 0;             // 0 = off, 1 = light, 2 = medium, 3 = strong
     float oledIntensity = 1.0f;    // 0..1
     float sharpness = 0.5f;        // 0..1

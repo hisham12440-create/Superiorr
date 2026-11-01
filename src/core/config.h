@@ -11,6 +11,11 @@ struct Settings {
     float sharpness = 0.5f;        // 0..1
     bool frameGen = true;
     bool antiAlias = true;
+    float contrast = 1.0f;       // 0.5..2
+    float saturation = 1.0f;     // 0..2
+    float brightness = 0.0f;     // -0.25..0.25
+    float gamma = 1.0f;          // 0.5..2
+    bool splitPreview = false;  // left: basic source, right: enhanced
     float vibrance = 0.25f;        // 0..1
 
     // Forces every field into its valid range.

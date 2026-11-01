@@ -29,8 +29,10 @@ struct RenderCb {
     float srcW, srcH, outW, outH;
     float offX, offY, scale, frame;
     float sharp, oledLevel, oledIntensity, vibrance;
+    float contrast, saturation, brightness, gamma;
+    float splitPreview, pad0, pad1, pad2;
 };
-static_assert(sizeof(RenderCb) == 48, "constant buffer layout");
+static_assert(sizeof(RenderCb) == 80, "constant buffer layout");
 
 struct FlowCb {
     float srcW, srcH, pad0, pad1;
@@ -363,6 +365,11 @@ void Renderer::PresentFinal(Src s, const Settings& st) {
     cb.oledLevel = static_cast<float>(st.oledLevel);
     cb.oledIntensity = st.oledIntensity;
     cb.vibrance = st.vibrance;
+    cb.contrast = st.contrast;
+    cb.saturation = st.saturation;
+    cb.brightness = st.brightness;
+    cb.gamma = st.gamma;
+    cb.splitPreview = st.splitPreview ? 1.0f : 0.0f;
     UpdateCb(cbRender_.Get(), &cb, sizeof cb);
 
     ID3D11ShaderResourceView* src = (s == Src::Mid) ? mid_.srv.Get() : cur_.srv.Get();
@@ -371,7 +378,12 @@ void Renderer::PresentFinal(Src s, const Settings& st) {
         src = aa_.srv.Get();
     }
     Draw(up_.rtv.Get(), outW_, outH_, psUp_.Get(), src);
+    // Final shader t1 is the unfiltered real source for split preview.
+    ID3D11ShaderResourceView* original = cur_.srv.Get();
+    ctx_->PSSetShaderResources(1, 1, &original);
     Draw(bbRtv_.Get(), outW_, outH_, psFinal_.Get(), up_.srv.Get());
+    original = nullptr;
+    ctx_->PSSetShaderResources(1, 1, &original);
 
     EndGpuTiming();
     const HRESULT hr = sc_->Present(1, 0);

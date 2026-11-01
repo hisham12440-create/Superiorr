@@ -1,4 +1,5 @@
 #include "panel.h"
+#include "filters/presets.h"
 #include <stdexcept>
 #include "imgui.h"
 #include "backends/imgui_impl_win32.h"
@@ -25,8 +26,8 @@ void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, s
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     if (!RegisterClassExW(&wc)) throw std::runtime_error("Cannot register settings window");
     window_ = CreateWindowExW(0, wc.lpszClassName, L"Superior | Control Center",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 860, 840, nullptr, nullptr, instance, nullptr);
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 920, 980, nullptr, nullptr, instance, nullptr);
     if (!window_) throw std::runtime_error("Cannot create settings window");
     device->GetImmediateContext(&context_);
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi;
@@ -40,6 +41,12 @@ void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, s
     desc.SampleDesc.Count = 1;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     desc.BufferCount = 2;
+    RECT client{};
+    if (!GetClientRect(window_, &client)) throw std::runtime_error("UI client bounds unavailable");
+    width_ = static_cast<UINT>(client.right);
+    height_ = static_cast<UINT>(client.bottom);
+    desc.BufferDesc.Width = width_;
+    desc.BufferDesc.Height = height_;
     desc.OutputWindow = window_;
     desc.Windowed = TRUE;
     desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
@@ -73,8 +80,22 @@ void Panel::Open(HINSTANCE instance, ID3D11Device* device, Settings* settings, s
 }
 void Panel::Show() { if (window_) { ShowWindow(window_, SW_SHOW); SetForegroundWindow(window_); } }
 bool Panel::Visible() const { return window_ && IsWindowVisible(window_); }
-void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw) {
+void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool safeMode) {
     if (!initialized_ || !Visible()) return;
+    RECT client{};
+    if (!GetClientRect(window_, &client) || IsIconic(window_) || client.right <= 0 || client.bottom <= 0) return;
+    const UINT width = static_cast<UINT>(client.right), height = static_cast<UINT>(client.bottom);
+    if (width != width_ || height != height_) {
+        context_->OMSetRenderTargets(0, nullptr, nullptr);
+        target_.Reset();
+        Check(swap_->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0), "UI resize failed");
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> buffer;
+        Check(swap_->GetBuffer(0, IID_PPV_ARGS(&buffer)), "UI resized back buffer failed");
+        Microsoft::WRL::ComPtr<ID3D11Device> device;
+        context_->GetDevice(&device);
+        Check(device->CreateRenderTargetView(buffer.Get(), nullptr, &target_), "UI resized target failed");
+        width_ = width; height_ = height;
+    }
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
@@ -84,6 +105,7 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw) {
     ImGui::SetNextWindowSize(ImVec2(static_cast<float>(r.right),static_cast<float>(r.bottom)));
     ImGui::Begin("Superior", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
     ImGui::TextColored(ImVec4(.2f,.65f,1,1), "S U P E R I O R   /   CONTROL CENTER");
+    if (safeMode) ImGui::TextColored(ImVec4(.3f,.7f,1,1), "SAFE MODE: frame generation is disabled");
     ImGui::TextDisabled("DirectX 11  |  Capture only  |  Prototype");
     ImGui::Separator();
     ImGui::Text("SESSION   %s", !running ? "Ready" : paused ? "Paused - game not foreground" : "Capturing");
@@ -105,6 +127,21 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw) {
     ImGui::SameLine(350);
     changed |= ImGui::Checkbox("Anti-aliasing", &settings_->antiAlias);
     changed |= ImGui::SliderFloat("Sharpness", &settings_->sharpness, 0, 1, "%.2f");
+    changed |= ImGui::SliderFloat("Contrast", &settings_->contrast, .5f, 2, "%.2f");
+    changed |= ImGui::SliderFloat("Saturation", &settings_->saturation, 0, 2, "%.2f");
+    changed |= ImGui::SliderFloat("Brightness", &settings_->brightness, -.25f, .25f, "%.2f");
+    changed |= ImGui::SliderFloat("Gamma", &settings_->gamma, .5f, 2, "%.2f");
+    changed |= ImGui::Checkbox("Before / after split (left is original)", &settings_->splitPreview);
+    const char* presetNames[] = {"Clean", "Vivid", "Cinematic", "Competitive", "OLED"};
+    if (ImGui::BeginCombo("Apply image preset", "Choose preset")) {
+        for (int i = 0; i < 5; ++i) {
+            if (ImGui::Selectable(presetNames[i])) {
+                filters::Apply(static_cast<filters::Preset>(i), *settings_);
+                changed = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
     changed |= ImGui::SliderFloat("Vibrance", &settings_->vibrance, 0, 1, "%.2f");
     const char* levels[] = {"Off", "Light", "Medium", "Strong"};
     changed |= ImGui::Combo("OLED emulation", &settings_->oledLevel, levels, 4);

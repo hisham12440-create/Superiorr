@@ -14,7 +14,7 @@ public:
     void Close();
     void Show();
     bool Visible() const;
-    void Draw(bool running, bool paused, const hardware::Snapshot& hardware);
+    void Draw(bool running, bool paused, const hardware::Snapshot& hardware, bool safeMode);
 private:
     static LRESULT CALLBACK Proc(HWND, UINT, WPARAM, LPARAM);
     HWND window_ = nullptr;
@@ -23,6 +23,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
     Microsoft::WRL::ComPtr<IDXGISwapChain> swap_;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> target_;
+    UINT width_ = 0, height_ = 0;
     bool initialized_ = false;
 };
 }

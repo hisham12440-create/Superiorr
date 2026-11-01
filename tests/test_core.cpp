@@ -189,3 +189,39 @@ TEST(Hardware, PowerPolicyNeverLoosensComfort) {
     EXPECT_FALSE(PowerAllowsGeneration(true, false));
     EXPECT_FALSE(PowerAllowsGeneration(false, true));
 }
+
+#include "filters/presets.h"
+TEST(Filters, ColourControlsClampAndRoundTrip) {
+    Settings settings;
+    ASSERT_TRUE(FromJson(R"({"contrast":9,"saturation":-1,"brightness":-9,"gamma":0,"split_preview":true})", settings));
+    EXPECT_FLOAT_EQ(settings.contrast, 2);
+    EXPECT_FLOAT_EQ(settings.saturation, 0);
+    EXPECT_FLOAT_EQ(settings.brightness, -.25f);
+    EXPECT_FLOAT_EQ(settings.gamma, .5f);
+    Settings copy;
+    ASSERT_TRUE(FromJson(ToJson(settings), copy));
+    EXPECT_FLOAT_EQ(copy.contrast, settings.contrast);
+    EXPECT_FLOAT_EQ(copy.saturation, settings.saturation);
+    EXPECT_FLOAT_EQ(copy.brightness, settings.brightness);
+    EXPECT_FLOAT_EQ(copy.gamma, settings.gamma);
+    EXPECT_TRUE(copy.splitPreview);
+}
+TEST(Filters, PresetsPreserveSessionAndLanguagePreferences) {
+    for (int i = 0; i < 5; ++i) {
+        Settings settings;
+        settings.language = "ar";
+        settings.comfortMode = 2;
+        settings.frameGen = false;
+        settings.splitPreview = true;
+        filters::Apply(static_cast<filters::Preset>(i), settings);
+        EXPECT_EQ(settings.language, "ar");
+        EXPECT_EQ(settings.comfortMode, 2);
+        EXPECT_FALSE(settings.frameGen);
+        EXPECT_TRUE(settings.splitPreview);
+        EXPECT_GE(settings.gamma, .5f);
+        EXPECT_LE(settings.gamma, 2);
+        Settings copy;
+        ASSERT_TRUE(FromJson(ToJson(settings), copy));
+        EXPECT_FLOAT_EQ(settings.contrast, copy.contrast);
+    }
+}

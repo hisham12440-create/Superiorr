@@ -36,6 +36,7 @@ public:
 
     void SetSourceSize(UINT w, UINT h);
     void PushFrame(ID3D11Texture2D* src, UINT w, UINT h);
+    void ResetHistory() { frames_ = 0; }
     int FramesHeld() const { return frames_ < 2 ? frames_ : 2; }
 
     void ComputeFlow();

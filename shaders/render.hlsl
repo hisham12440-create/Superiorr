@@ -19,6 +19,12 @@ cbuffer CB : register(b0)
     float oledLevel;
     float oledIntensity;
     float vibrance;
+    float contrast;
+    float saturation;
+    float brightness;
+    float gamma;
+    float splitPreview;
+    float3 cbPadding;
 };
 
 struct VSOut
@@ -269,6 +275,12 @@ float4 PSFinal(VSOut i) : SV_Target
 {
     float2 p = i.pos.xy;
     int2 ip = int2(p);
+    if (splitPreview > 0.5 && p.x < outSize.x * 0.5)
+    {
+        float2 sourcePixel = (p - offset) / scale;
+        if (any(sourcePixel < 0) || any(sourcePixel >= srcSize)) return float4(0,0,0,1);
+        return float4(tB.SampleLevel(sLin, sourcePixel / srcSize, 0).rgb, 1);
+    }
     float3 c = LdUp(ip);
     float3 n = LdUp(ip + int2(0, -1));
     float3 s = LdUp(ip + int2(0, 1));
@@ -303,6 +315,12 @@ float4 PSFinal(VSOut i) : SV_Target
         blur += tA.SampleLevel(sLin, (p + float2(-4, -4)) * ro, 0).rgb;
         c = Oled(c, blur * 0.125);
     }
+
+    // User colour controls, fused into the existing final pass.
+    float colourLuma = Lum(c);
+    c = lerp(float3(colourLuma, colourLuma, colourLuma), c, saturation);
+    c = saturate((c - 0.5) * contrast + 0.5 + brightness);
+    c = pow(c, 1.0 / max(gamma, 0.5));
 
     // Triangular dither before the 8-bit back buffer: removes banding in gradients.
     float n1 = frac(sin(dot(p + frame, float2(12.9898, 78.233))) * 43758.5453);

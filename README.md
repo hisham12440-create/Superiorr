@@ -144,3 +144,31 @@ group time, resize capture repeatedly and test scene cuts / small HUD updates.
 
 A green build validates compilation and CPU tests, not real GPU quality. None of
 the unimplemented features in this table is represented by a placeholder result.
+
+## Colour controls and safe startup
+
+Contrast (0.5–2), saturation (0–2), brightness (-0.25–0.25), and gamma (0.5–2)
+now run inside the existing final pixel-shader pass, after OLED processing and
+before dither. They are saved with the other settings. This is pass fusion, not
+a conversion of the entire pipeline to a compute shader. Presets **Clean,
+Vivid, Cinematic, Competitive, OLED** apply explicit colour/sharpness parameters;
+these are aesthetic choices, not measured quality rankings. Presets do not
+change the operating mode, language or generation preference.
+
+**Before / after split** shows the current real frame with basic bilinear scaling
+on the left and the enhanced pipeline on the right (including a generated frame
+if selected). It is a visual comparison, not a synchronized quality metric or
+latency benchmark. On a static paused capture, adjustments become visible with
+the next captured/presented frame. The control window is resizable and scrolls
+on small displays.
+
+Launch `Superior.exe --safe` to force interpolation off regardless of the saved
+setting or hotkey. Spatial upscale and image filters remain available. The panel
+shows a safe-mode banner. This does not implement automatic crash recovery or
+a neural-runtime loader. Capture history is invalidated when focus changes so
+old frames are not interpolated into a resumed session.
+
+The earlier roadmap table's filter/distribution rows are superseded only by
+these colour controls, presets, split preview and safe-mode additions. LUTs,
+per-game profiles, learned models, full RTL and the 99% validation corpus are
+still absent. No real-GPU pass rate or watt-saving number is available.

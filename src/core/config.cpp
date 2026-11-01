@@ -18,11 +18,20 @@ void Settings::Clamp() {
     oledLevel = std::min(3, std::max(0, oledLevel));
     oledIntensity = std::min(1.0f, std::max(0.0f, oledIntensity));
     sharpness = std::min(1.0f, std::max(0.0f, sharpness));
+    contrast = std::min(2.0f, std::max(0.5f, contrast));
+    saturation = std::min(2.0f, std::max(0.0f, saturation));
+    brightness = std::min(0.25f, std::max(-0.25f, brightness));
+    gamma = std::min(2.0f, std::max(0.5f, gamma));
     vibrance = std::min(1.0f, std::max(0.0f, vibrance));
 }
 
 std::string ToJson(const Settings& s) {
     nlohmann::json j;
+    j["contrast"] = s.contrast;
+    j["saturation"] = s.saturation;
+    j["brightness"] = s.brightness;
+    j["gamma"] = s.gamma;
+    j["split_preview"] = s.splitPreview;
     j["comfort_mode"] = s.comfortMode;
     j["language"] = s.language;
     j["oled_level"] = s.oledLevel;
@@ -38,6 +47,11 @@ bool FromJson(const std::string& text, Settings& out) {
     try {
         nlohmann::json j = nlohmann::json::parse(text);
         Settings s = out;
+        s.contrast = j.value("contrast", s.contrast);
+        s.saturation = j.value("saturation", s.saturation);
+        s.brightness = j.value("brightness", s.brightness);
+        s.gamma = j.value("gamma", s.gamma);
+        s.splitPreview = j.value("split_preview", s.splitPreview);
         s.comfortMode = j.value("comfort_mode", s.comfortMode);
         s.language = j.value("language", s.language);
         s.oledLevel = j.value("oled_level", s.oledLevel);

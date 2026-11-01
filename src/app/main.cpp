@@ -37,6 +37,7 @@ struct App {
     Panel panel;
     hardware::Monitor monitor;
     bool paused = false;
+    bool safeMode = false;
     HANDLE frameEvent = nullptr;
     NOTIFYICONDATAW nid{};
 
@@ -206,7 +207,7 @@ void OnFrame(ID3D11Texture2D* tex, UINT w, UINT h) {
     g.srcH = h;
 
     g.queue.clear();
-    const bool canGen = g.st.frameGen && g.monitor.Data().allowGeneration && g.gfx.FramesHeld() >= 2 &&
+    const bool canGen = g.st.frameGen && !g.safeMode && g.monitor.Data().allowGeneration && g.gfx.FramesHeld() >= 2 &&
                         ShouldGenerate(g.ema.Value(), g.displayIntervalMs, g.ema.Count());
     g.genActive = false;
     if (canGen) {
@@ -223,6 +224,7 @@ void Tick(bool ready) {
     const bool paused = IsIconic(g.target) || GetForegroundWindow() != g.target;
     if (paused != g.paused) {
         g.paused = paused;
+        g.gfx.ResetHistory();
         ShowWindow(g.overlay, paused ? SW_HIDE : SW_SHOWNOACTIVATE);
         g.queue.clear();
         g.ema.Reset();
@@ -343,6 +345,13 @@ LRESULT CALLBACK MainProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     g.inst = inst;
+    int argumentCount = 0;
+    wchar_t** arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+    if (arguments) {
+        for (int i = 1; i < argumentCount; ++i)
+            if (wcscmp(arguments[i], L"--safe") == 0) g.safeMode = true;
+        LocalFree(arguments);
+    }
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Superior.SingleInstance");
@@ -432,7 +441,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             try {
                 if (auto time = g.gfx.PollGpuTime()) g.monitor.RecordGpuTime(*time);
                 g.monitor.Poll(NowMs(), static_cast<hardware::Mode>(g.st.comfortMode), g.displayIntervalMs);
-                g.panel.Draw(g.running, g.paused, g.monitor.Data());
+                g.panel.Draw(g.running, g.paused, g.monitor.Data(), g.safeMode);
             } catch (const std::exception& e) {
                 SERR("UI error: %s", e.what());
                 g.panel.Close();

@@ -343,3 +343,24 @@ an OLED. The four image presets no longer change OLED or AA preferences. Filter-
 also leaves OLED intact. The Preferences reset retains its existing image/session scope.
 Windows CI validates compilation, shaders and CPU references, not the rendered appearance;
 Arabic shaping, DPI, window resizing and real GPU output still require manual Windows testing.
+
+### Expansion 1: setup guidance and portable settings
+
+**Setup guide** adds a bilingual in-app walkthrough: borderless preparation, safe x2
+starting point, shortcut/tray launch, comparison, session reporting and troubleshooting.
+Readiness observations show the already-initialized DX11 UI, known/unknown DXGI budget
+and safe-mode restriction. They do not probe WGC compatibility, certify anti-cheat
+acceptance or invent a benchmark. Device-loss recovery is still not implemented.
+
+**Preferences → Share image and session settings** exports/imports a version-1
+`superior-settings` JSON bundle through native file pickers. Capture and offline work
+must be stopped. Import replaces image/session values (including split preview), but
+preserves language, key bindings and automatic-profile preference. Importing does not
+start capture. Export excludes these local preferences, paths and hardware identities.
+
+Imports require the complete known v1 field set and correct types; unknown fields,
+future versions, excessive nesting, malformed files and files above 64 KiB are rejected
+without changing settings. Numeric image ranges are clamped as in local settings.
+Exports use atomic replacement and the picker asks before overwriting. Local config
+JSON, session reports and verifier manifests are not interchangeable with bundles.
+This adds functionality, not filler; no 20–50 MB size claim is made.

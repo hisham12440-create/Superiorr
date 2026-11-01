@@ -32,6 +32,10 @@ private:
         std::atomic<bool> cancel{false};
         std::atomic<size_t> completed{0}, total{0};
     };
+    void DrawSetup(const hardware::Snapshot& hardware, bool safeMode);
+    void DrawSettingsTransfer(bool running);
+    void ChooseSettingsBundle(bool importing);
+    std::string transferStatus_;
     bool DrawFilters();
     bool DrawOled();
     int page_ = 0;

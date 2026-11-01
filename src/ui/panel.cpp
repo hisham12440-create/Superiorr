@@ -150,8 +150,8 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(rtl ? 1 : 0);
         ImGui::BeginChild("Navigation", ImVec2(0, bodyHeight), ImGuiChildFlags_Borders);
-        const char* pages[] = {"Overview", "Image filters", "OLED display", "Quality tools", "Preferences"};
-        for (int i=0; i<5; ++i) {
+        const char* pages[] = {"Overview", "Image filters", "OLED display", "Quality tools", "Preferences", "Setup guide"};
+        for (int i=0; i<6; ++i) {
             ImGui::PushID(i);
             if (localized::Selectable(pages[i], page_==i)) page_=i;
             ImGui::PopID();
@@ -194,7 +194,10 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
                 localized::TextWrapped("Offline DirectML inference: Superior.exe --neural input.pgm output.pgm model.onnx");
             }
             DrawVerification(running);
+        } else if (page_ == 5) {
+            DrawSetup(hw, safeMode);
         } else {
+            DrawSettingsTransfer(running);
             if (localized::CollapsingHeader("GAME PROFILES")) {
                 changed |= localized::Checkbox("Load / save per-game image settings (next session)", &settings_->autoProfiles);
                 localized::TextWrapped("%s", profileStatus_.c_str());
@@ -220,11 +223,11 @@ void Panel::Draw(bool running, bool paused, const hardware::Snapshot& hw, bool s
                     localized::CheckboxFlags("Win", &mods, 8);
                     draftKeys_[i].modifiers = static_cast<uint32_t>(mods);
                     ImGui::PopID();
-        }
+                }
                 localized::TextDisabled("F12 is reserved by Windows; at least one modifier is required.");
                 if (localized::Button("Apply shortcuts")) {
                     if (applyHotkeys_(draftKeys_, hotkeyStatus_)) hotkeyStatus_ = "Shortcuts applied";
-        }
+                }
                 if (localized::Button("Edit default shortcuts")) draftKeys_ = DefaultHotkeys();
                 if (localized::Button("Discard shortcut edits")) { draftKeys_ = settings_->hotkeys; hotkeyStatus_.clear(); }
                 localized::TextWrapped("%s", hotkeyStatus_.c_str());

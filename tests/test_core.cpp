@@ -751,3 +751,86 @@ TEST(Oled, ZeroIntensityIsExactIdentityAtEveryActiveLevel) {
             EXPECT_FLOAT_EQ(OledCurve(y,level,0),y);
         }
 }
+
+#include "core/settings_bundle.h"
+#include <nlohmann/json.hpp>
+TEST(Bundle, RoundTripPreservesLocalPreferencesAndCopiesAllPortableValues) {
+    Settings source,destination;
+    source.temperature=-.7f; source.aaStrength=.4f; source.sharpnessEnabled=false;
+    source.oledLevel=3; source.oledIntensity=.25f; source.splitPreview=true;
+    source.frameGen=false; source.maxMultiplier=4;
+    destination.language="ar"; destination.autoProfiles=false;
+    const auto localKeys=destination.hotkeys;
+    std::string error;
+    ASSERT_TRUE(ImportSettingsBundle(ExportSettingsBundle(source),destination,error)) << error;
+    EXPECT_TRUE(error.empty()); EXPECT_EQ(destination.language,"ar"); EXPECT_FALSE(destination.autoProfiles);
+    for(size_t i=0;i<localKeys.size();++i) {
+        EXPECT_EQ(destination.hotkeys[i].key,localKeys[i].key);
+        EXPECT_EQ(destination.hotkeys[i].modifiers,localKeys[i].modifiers);
+    }
+    EXPECT_FLOAT_EQ(destination.temperature,-.7f); EXPECT_FLOAT_EQ(destination.aaStrength,.4f);
+    EXPECT_FALSE(destination.sharpnessEnabled); EXPECT_EQ(destination.oledLevel,3);
+    EXPECT_FLOAT_EQ(destination.oledIntensity,.25f); EXPECT_TRUE(destination.splitPreview);
+    EXPECT_FALSE(destination.frameGen); EXPECT_EQ(destination.maxMultiplier,4);
+}
+TEST(Bundle, ExportContainsNoLocalIdentityOrShortcuts) {
+    const auto root=nlohmann::json::parse(ExportSettingsBundle(Settings{}));
+    EXPECT_EQ(root.at("format"),"superior-settings"); EXPECT_EQ(root.at("version"),1);
+    const auto& settings=root.at("settings");
+    EXPECT_FALSE(settings.contains("hotkeys")); EXPECT_FALSE(settings.contains("language"));
+    EXPECT_FALSE(settings.contains("auto_profiles"));
+}
+TEST(Bundle, InvalidInputsNeverPartiallyMutateDestination) {
+    Settings destination; destination.language="ar"; destination.temperature=.6f;
+    const auto original=ToJson(destination);
+    auto valid=nlohmann::json::parse(ExportSettingsBundle(Settings{}));
+    std::vector<std::string> invalid={"", "[]", "{}", "{bad", std::string(65537,'x')};
+    auto v=valid; v["version"]=2; invalid.push_back(v.dump());
+    v=valid; v["version"]=1.5; invalid.push_back(v.dump());
+    v=valid; v["settings"].erase("contrast"); invalid.push_back(v.dump());
+    v=valid; v["settings"]["language"]="en"; invalid.push_back(v.dump());
+    v=valid; v["settings"]["temperature"]="warm"; invalid.push_back(v.dump());
+    v=valid; v["settings"]["frame_gen"]=1; invalid.push_back(v.dump());
+    v=valid; v["settings"]["oled_level"]=1.5; invalid.push_back(v.dump());
+    v=valid; v["settings"]["oled_level"]=9223372036854775807LL; invalid.push_back(v.dump());
+    v=valid; v["settings"]["gamma"]=nullptr; invalid.push_back(v.dump());
+    v=valid; v["extra"]=true; invalid.push_back(v.dump());
+    for(const auto& input:invalid) {
+        std::string error;
+        EXPECT_FALSE(ImportSettingsBundle(input,destination,error));
+        EXPECT_FALSE(error.empty()); EXPECT_EQ(ToJson(destination),original);
+    }
+}
+TEST(Bundle, NumericRangesAreClampedAndFailureErrorClearsOnSuccess) {
+    auto root=nlohmann::json::parse(ExportSettingsBundle(Settings{}));
+    root["settings"]["temperature"]=12; root["settings"]["aa_strength"]=-1;
+    Settings destination; std::string error="old error";
+    ASSERT_TRUE(ImportSettingsBundle(root.dump(),destination,error));
+    EXPECT_TRUE(error.empty()); EXPECT_FLOAT_EQ(destination.temperature,1); EXPECT_FLOAT_EQ(destination.aaStrength,0);
+}
+TEST_F(StorageTest, BundleFilesRoundTripAndRejectOversizedOrMissingFiles) {
+    const auto path=directory/"shared-settings.json";
+    Settings source,destination; source.temperature=.75f;
+    ASSERT_TRUE(SaveSettingsBundle(path,source));
+    std::string error;
+    ASSERT_TRUE(LoadSettingsBundle(path,destination,error)); EXPECT_FLOAT_EQ(destination.temperature,.75f);
+    const auto before=ToJson(destination);
+    EXPECT_FALSE(LoadSettingsBundle(directory/"missing.json",destination,error));
+    EXPECT_EQ(ToJson(destination),before);
+    ASSERT_TRUE(WriteTextAtomic(path,std::string(65537,'x')));
+    EXPECT_FALSE(LoadSettingsBundle(path,destination,error)); EXPECT_EQ(ToJson(destination),before);
+}
+TEST_F(StorageTest, BundleFailedSaveDoesNotModifyExistingFile) {
+    const auto path=directory/"shared.json";
+    ASSERT_TRUE(SaveSettingsBundle(path,Settings{}));
+    std::string original; ASSERT_TRUE(ReadText(path,original));
+    EXPECT_FALSE(SaveSettingsBundle(directory/"missing"/"shared.json",Settings{}));
+    std::string after; ASSERT_TRUE(ReadText(path,after)); EXPECT_EQ(original,after);
+}
+
+TEST(Bundle, ExcessiveNestingIsRejectedWithoutMutation) {
+    Settings destination; const auto before=ToJson(destination); std::string error;
+    const std::string nested=std::string(2000,'[')+"0"+std::string(2000,']');
+    EXPECT_FALSE(ImportSettingsBundle(nested,destination,error));
+    EXPECT_EQ(ToJson(destination),before); EXPECT_FALSE(error.empty());
+}

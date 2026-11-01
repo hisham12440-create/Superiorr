@@ -454,3 +454,18 @@ TEST(Config, GenerationMultiplierRoundTripAndClamp) {
     ASSERT_TRUE(FromJson(ToJson(settings),restored));
     EXPECT_EQ(restored.maxMultiplier,4);
 }
+TEST_F(StorageTest, VerificationNeverOverwritesManifestOrImages) {
+    using namespace superior::benchmark;
+    const std::string source=R"({"frames":[{"truth":"frame.pgm","generated":"frame.pgm","source_a":"frame.pgm","source_b":"frame.pgm"}]})";
+    const auto manifest=directory/"manifest.json";
+    ASSERT_TRUE(WriteTextAtomic(manifest,source));
+    EXPECT_EQ(Verify(manifest,manifest),1);
+    std::string text;
+    ASSERT_TRUE(ReadText(manifest,text));
+    EXPECT_EQ(text,source);
+    const auto image=directory/"frame.pgm";
+    ASSERT_TRUE(WriteTextAtomic(image,"P2\n1 1\n255\n0"));
+    EXPECT_EQ(Verify(manifest,image),1);
+    ASSERT_TRUE(ReadText(image,text));
+    EXPECT_EQ(text,"P2\n1 1\n255\n0");
+}

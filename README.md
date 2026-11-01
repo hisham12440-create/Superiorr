@@ -362,3 +362,10 @@ This section supersedes earlier x2-only/Arabic-absent status text, but it does n
 mean all 13 requested stages are complete. Runtime per-generated-frame validation,
 corpus recording, live learned SR, layered/higher-order flow and a verified 99%
 pass rate are still missing. The application remains experimental.
+
+The portable zip also includes the example verifier manifest under `docs/`.
+CI smoke-tests the built Windows EXE's `--verify` command on an identical-image
+metric fixture and its `--neural` missing-input failure path. These tests require
+no GPU and must not be read as model-inference or interpolation-quality results.
+Evaluator output paths are rejected if they would overwrite the manifest, source
+images, neural model or license record.

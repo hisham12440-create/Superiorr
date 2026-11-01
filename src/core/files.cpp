@@ -6,6 +6,11 @@
 #include <windows.h>
 #endif
 namespace superior {
+bool SameFile(const std::filesystem::path& a, const std::filesystem::path& b) {
+    std::error_code error;
+    if (std::filesystem::equivalent(a,b,error)) return true;
+    return std::filesystem::absolute(a).lexically_normal() == std::filesystem::absolute(b).lexically_normal();
+}
 bool ReadText(const std::filesystem::path& path, std::string& text, size_t maxBytes) {
     try {
         std::ifstream input(path, std::ios::binary | std::ios::ate);

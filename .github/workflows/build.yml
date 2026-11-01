@@ -47,12 +47,43 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
+      - name: Smoke test offline executable commands (CPU only)
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "Superior-offline-smoke"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $frame = Join-Path $dir "frame.pgm"
+          "P2`n2 2`n255`n0 0 255 255" | Set-Content -Encoding ascii $frame
+          $manifest = Join-Path $dir "manifest.json"
+          $report = Join-Path $dir "report.json"
+          @{ frames = @(@{ truth="frame.pgm"; generated="frame.pgm"; source_a="frame.pgm"; source_b="frame.pgm" }) } | ConvertTo-Json -Depth 5 | Set-Content $manifest
+          $exe = (Resolve-Path build\Release\Superior.exe).Path
+          function Invoke-Superior([string[]]$arguments) {
+            $process = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); throw "Offline command timed out" }
+            $process.Refresh()
+            return $process.ExitCode
+          }
+          $code = Invoke-Superior @('--verify', ('"' + $manifest + '"'), ('"' + $report + '"'))
+          if ($code -ne 0) { throw "Reference verifier failed: $code" }
+          $result = Get-Content $report -Raw | ConvertFrom-Json
+          if (-not $result.target_achieved -or $result.frame_count -ne 1) { throw "Unexpected metric fixture report" }
+          $missing = Join-Path $dir "missing.pgm"
+          $output = Join-Path $dir "neural.pgm"
+          $code = Invoke-Superior @('--neural', ('"' + $missing + '"'), ('"' + $output + '"'), 'missing-model.onnx')
+          if ($code -ne 1) { throw "Missing neural input should exit 1, got $code" }
+          $failure = Get-Content ($output + '.report.json') -Raw | ConvertFrom-Json
+          if ($failure.success -ne $false) { throw "Missing input incorrectly reported success" }
+          "Offline CLI smoke tests passed (metric fixture only; no GPU/model inference tested)." | Write-Host
+
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item build\Release\Superior.exe dist\
           Copy-Item README.md dist\
+          New-Item -ItemType Directory -Force dist\docs | Out-Null
+          Copy-Item docs\verification-manifest.example.json dist\docs\
           $hash = (Get-FileHash dist\Superior.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  Superior.exe" | Set-Content dist\SHA256SUMS.txt
           Compress-Archive -Path dist\* -DestinationPath Superior-portable.zip

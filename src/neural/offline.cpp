@@ -50,7 +50,13 @@ struct Runtime {
 int RunOffline(const std::filesystem::path& runtimeDirectory,const std::filesystem::path& input,
                const std::filesystem::path& output,const std::filesystem::path& model) {
     auto report=output; report += ".report.json";
+    bool mayWriteError = false;
     try {
+        auto licensePath=model; licensePath += ".license.txt";
+        for(const auto& protectedPath:{input,model,licensePath})
+            if(SameFile(protectedPath,output) || SameFile(protectedPath,report))
+                throw std::runtime_error("Output/report must not overwrite input, model or license");
+        mayWriteError = true;
         auto source=benchmark::ReadPgm(input);
         if(source.width>1024 || source.height>1024) throw std::runtime_error("Offline neural input is limited to 1024x1024; tiled inference is not implemented");
         auto license=model; license += ".license.txt";
@@ -134,7 +140,7 @@ int RunOffline(const std::filesystem::path& runtimeDirectory,const std::filesyst
         if(!WriteTextAtomic(report,metadata.dump(2))) throw std::runtime_error("Could not save neural report");
         return 0;
     } catch(const std::exception& e) {
-        WriteTextAtomic(report,nlohmann::json({{"success",false},{"error",e.what()},{"live_spatial_fallback",true}}).dump(2));
+        if(mayWriteError) WriteTextAtomic(report,nlohmann::json({{"success",false},{"error",e.what()},{"live_spatial_fallback",true}}).dump(2));
         return 1;
     }
 }

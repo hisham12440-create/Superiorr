@@ -100,7 +100,11 @@ bool Pass(const Metrics& m,const Thresholds& t) {
         m.ssim>=t.ssim && m.edgeError<=t.edgeError && m.flaggedPercent<=t.flaggedPercent;
 }
 int Verify(const std::filesystem::path& manifest,const std::filesystem::path& report) {
+    bool mayWriteError = false;
     try {
+        auto readable = report; readable += ".txt";
+        if(SameFile(manifest,report) || SameFile(manifest,readable)) throw std::runtime_error("Report must not overwrite manifest");
+        mayWriteError = true;
         std::string text;
         if(!ReadText(manifest,text,8*1024*1024)) throw std::runtime_error("Cannot read manifest (limit 8 MiB)");
         const auto input=nlohmann::json::parse(text);
@@ -110,6 +114,13 @@ int Verify(const std::filesystem::path& manifest,const std::filesystem::path& re
         const auto& frames=input.at("frames");
         if(!frames.is_array() || frames.empty() || frames.size()>10000) throw std::runtime_error("Manifest needs 1..10000 frames");
         auto path=[&](const nlohmann::json& j,const char* name) { return manifest.parent_path()/std::filesystem::u8path(j.at(name).get<std::string>()); };
+        for(const auto& frame:frames) for(const char* field:{"truth","generated","source_a","source_b"}) {
+            const auto imagePath=path(frame,field);
+            if(SameFile(imagePath,report) || SameFile(imagePath,readable)) {
+                mayWriteError=false;
+                throw std::runtime_error("Report must not overwrite an input image");
+            }
+        }
         nlohmann::json results=nlohmann::json::array(); size_t passed=0;
         for(const auto& frame:frames) {
             const auto m=Compare(ReadPgm(path(frame,"truth")),ReadPgm(path(frame,"generated")),ReadPgm(path(frame,"source_a")),ReadPgm(path(frame,"source_b")));
@@ -121,13 +132,12 @@ int Verify(const std::filesystem::path& manifest,const std::filesystem::path& re
             {"frame_count",frames.size()},{"passed",passed},{"pass_percent",rate},{"target_percent",t.targetPercent},{"target_achieved",rate>=t.targetPercent},
             {"thresholds",{{"ssim",t.ssim},{"edge_error",t.edgeError},{"flagged_percent",t.flaggedPercent}}},{"frames",results}};
         if(!WriteTextAtomic(report,output.dump(2))) throw std::runtime_error("Cannot write report");
-        auto readable=report; readable += ".txt";
         std::ostringstream summary; summary<<"Superior offline reference verification\nFrames: "<<frames.size()<<"\nPassed: "<<passed<<"\nPass rate: "<<rate<<"%\nTarget: "<<t.targetPercent<<"%\nGround truth SSIM and edge error; ghost flags are a source-comparison proxy.\nNo claim about other games or GPU execution.\n";
         if(!WriteTextAtomic(readable,summary.str())) throw std::runtime_error("Cannot write text report");
         return rate>=t.targetPercent?0:2;
     } catch(const std::exception& e) {
         const nlohmann::json error={{"error",e.what()},{"target_achieved",false}};
-        WriteTextAtomic(report,error.dump(2));
+        if(mayWriteError) WriteTextAtomic(report,error.dump(2));
         return 1;
     }
 }
